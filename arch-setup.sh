@@ -2,7 +2,7 @@
 
 # arch-setup.sh - Полный скрипт настройки Arch Linux с GNOME 48
 # Разработан для: Intel Core i7 13700k, RTX 4090, 32 ГБ ОЗУ, 4 NVME Gen4, 2 HDD
-# Версия: 1.1 (Март 2025)
+# Версия: 1.2 (Март 2025)
 
 # Цвета для вывода
 RED="\033[0;31m"
@@ -333,16 +333,33 @@ if contains 2 "${selected_options[@]}"; then
             run_command "cat << EOF | sudo tee /etc/modprobe.d/nvidia.conf
 options nvidia-drm modeset=1
 options nvidia NVreg_PreserveVideoMemoryAllocations=1
+options nvidia NVreg_RegistryDwords=RMCleanupInSmoMode=0x1
 EOF"
         fi
+
+        # Блокировка nouveau
+        run_command "cat << EOF | sudo tee /etc/modprobe.d/blacklist-nvidia-nouveau.conf
+blacklist nouveau
+options nouveau modeset=0
+EOF"
         
-        # Добавление модулей NVIDIA в initramfs
+        # Добавление модулей NVIDIA в initramfs в правильном порядке
         if ! grep -q "nvidia" /etc/mkinitcpio.conf; then
+            # Важно: правильный порядок модулей имеет значение
             run_command "sudo sed -i 's/^MODULES=(/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm /' /etc/mkinitcpio.conf"
+            
+            # Добавление KMS в hooks для раннего запуска 
+            if ! grep -q "kms" /etc/mkinitcpio.conf; then
+                run_command "sudo sed -i '/^HOOKS=/ s/udev/udev kms/' /etc/mkinitcpio.conf"
+            fi
+            
             run_command "sudo mkinitcpio -P linux-zen" "critical"
         else
             print_success "Модули NVIDIA уже добавлены в mkinitcpio.conf"
         fi
+        
+        # Добавляем параметр ядра для nvidia_drm.modeset
+        run_command "echo 'nvidia_drm.modeset=1' | sudo tee /etc/kernel/cmdline.d/nvidia-drm.conf"
     else
         print_warning "Пропускаем настройку NVIDIA из-за отсутствия необходимых пакетов"
     fi
@@ -429,6 +446,9 @@ if contains 4 "${selected_options[@]}"; then
                 echo "Найдены следующие NVMe диски для форматирования:"
                 echo "$nvme_disks"
                 
+                # Счетчик для нумерации папок NVMe, начиная с 1
+                nvme_count=1
+                
                 for disk in $nvme_disks; do
                     if confirm "Форматировать /dev/$disk?"; then
                         # Создание GPT таблицы разделов
@@ -437,10 +457,8 @@ if contains 4 "${selected_options[@]}"; then
                         # Создание одного большого раздела
                         run_command "sudo parted -a optimal /dev/$disk mkpart primary ext4 0% 100%"
                         
-                        # Получаем номер NVMe диска и создаем правильную метку и точку монтирования
-                        nvme_num=$(echo "$disk" | grep -o '[0-9]\+' | head -1)
-                        nvme_index=$((nvme_num + 1))
-                        label="nvme$nvme_index"
+                        # Использование последовательной нумерации с большой буквы, начиная с 1
+                        label="NVME$nvme_count"
                         mount_point="/mnt/$label"
                         
                         echo "Форматирование $disk (метка: $label, точка монтирования: $mount_point)"
@@ -460,6 +478,9 @@ if contains 4 "${selected_options[@]}"; then
                         run_command "sudo mount $mount_point"
                         
                         print_success "Диск /dev/$disk успешно отформатирован и примонтирован"
+                        
+                        # Увеличиваем счетчик для следующего диска
+                        nvme_count=$((nvme_count + 1))
                     fi
                 done
             fi
@@ -488,13 +509,12 @@ if contains 4 "${selected_options[@]}"; then
                         # Создание одного большого раздела
                         run_command "sudo parted -a optimal /dev/$disk mkpart primary ext4 0% 100%"
                         
-                        # Получаем правильный индекс для именования HDD
+                        # Преобразуем букву в номер (a->1, b->2, и т.д.) и используем большие буквы
                         hdd_letter=$(echo "$disk" | grep -o '[a-z]$')
-                        # Преобразуем букву в номер (a->1, b->2, и т.д.)
                         hdd_index=$(printf "%d" "'$hdd_letter")
                         hdd_index=$((hdd_index - 96)) # 'a' имеет ASCII код 97, поэтому а->1, b->2 и т.д.
                         
-                        label="hdd$hdd_index"
+                        label="HDD$hdd_index"
                         mount_point="/mnt/$label"
                         
                         # Форматирование в ext4
@@ -655,8 +675,21 @@ if contains 7 "${selected_options[@]}"; then
         # Добавление репозитория Flathub
         run_command "flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo"
         
-        # Установка платформы GNOME
-        run_command "flatpak install -y flathub org.gnome.Platform//45"
+        # Определение последней доступной версии GNOME Platform
+        echo "Определение последней версии GNOME Platform..."
+        # Пробуем получить последнюю версию из доступных в репозитории
+        latest_gnome_version=$(flatpak remote-info --log flathub org.gnome.Platform 2>/dev/null | grep -oP "Version: \K[0-9]+" | head -1)
+        
+        # Устанавливаем версию по умолчанию, если не удалось получить
+        if [ -z "$latest_gnome_version" ]; then
+            latest_gnome_version=48  # Используем актуальную версию по состоянию на март 2025
+            print_warning "Не удалось определить последнюю версию GNOME Platform, используем версию $latest_gnome_version"
+        else
+            print_success "Определена последняя версия GNOME Platform: $latest_gnome_version"
+        fi
+        
+        # Установка платформы GNOME последней версии
+        run_command "flatpak install -y flathub org.gnome.Platform//$latest_gnome_version"
         
         print_success "Настройка Flathub и GNOME Software завершена"
     else
@@ -764,27 +797,38 @@ if contains 10 "${selected_options[@]}"; then
     
     # Проверка необходимых пакетов
     if check_and_install_packages "Wayland" "qt6-wayland" "qt5-wayland" "xorg-xwayland"; then
-        # Добавляем переменные окружения для Wayland и NVIDIA
+        # Добавляем переменные окружения для Wayland и NVIDIA (безопасная конфигурация)
         cat << EOF | sudo tee -a /etc/environment > /dev/null
 # Настройки Wayland и NVIDIA
 LIBVA_DRIVER_NAME=nvidia
-XDG_SESSION_TYPE=wayland
 GBM_BACKEND=nvidia-drm
 __GLX_VENDOR_LIBRARY_NAME=nvidia
-WLR_NO_HARDWARE_CURSORS=1
 MOZ_ENABLE_WAYLAND=1
 MOZ_WEBRENDER=1
 QT_QPA_PLATFORM=wayland
 QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 EOF
+
+        # Настройка egl-wayland для NVIDIA (необходимо для корректной работы)
+        run_command "sudo pacman -S --needed --noconfirm egl-wayland"
         
-        # Установка xwaylandvideobridge из AUR (опционально)
-        if check_command "paru"; then
-            if confirm "Установить xwaylandvideobridge для захвата экрана XWayland-приложений?"; then
-                run_command "paru -S --noconfirm xwaylandvideobridge"
-            fi
-        else
-            print_warning "Paru не установлен. Пропускаем установку xwaylandvideobridge."
+        # Создание конфигурации для GDM
+        run_command "sudo mkdir -p /etc/gdm"
+        if [ ! -f /etc/gdm/custom.conf ]; then
+            cat << EOF | sudo tee /etc/gdm/custom.conf > /dev/null
+# GDM configuration
+[daemon]
+# Automatically enable Wayland
+WaylandEnable=true
+
+[security]
+
+[xdmcp]
+
+[chooser]
+
+[debug]
+EOF
         fi
         
         print_success "Оптимизация для Wayland завершена"
@@ -937,14 +981,6 @@ if contains 14 "${selected_options[@]}"; then
     
     # Проверка необходимых пакетов
     if check_and_install_packages "Резервное копирование" "timeshift"; then
-        # Проверка наличия paru для установки timeshift-autosnap
-        if check_command "paru"; then
-            # Установка интеграции для BTRFS (через paru, так как этот пакет в AUR)
-            run_command "paru -S --noconfirm timeshift-autosnap"
-        else
-            print_warning "Paru не установлен. Пропускаем установку timeshift-autosnap."
-        fi
-        
         # Базовая настройка Timeshift
         if [ -d "$HOME/.config/timeshift" ]; then
             print_warning "Конфигурация Timeshift уже существует"
