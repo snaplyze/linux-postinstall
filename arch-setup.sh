@@ -2,7 +2,7 @@
 
 # arch-setup.sh - Полный скрипт настройки Arch Linux с GNOME 48
 # Разработан для: Intel Core i7 13700k, RTX 4090, 32 ГБ ОЗУ, 4 NVME Gen4, 2 HDD
-# Версия: 1.2 (Март 2025)
+# Версия: 1.3 (Март 2025)
 
 # Цвета для вывода
 RED="\033[0;31m"
@@ -251,7 +251,7 @@ if contains 8 "${selected_options[@]}" || contains 15 "${selected_options[@]}"; 
 fi
 
 if contains 10 "${selected_options[@]}" || contains 15 "${selected_options[@]}"; then
-    all_required_packages+=("qt6-wayland" "qt5-wayland" "xorg-xwayland")
+    all_required_packages+=("qt6-wayland" "qt5-wayland" "xorg-xwayland" "egl-wayland")
 fi
 
 if contains 11 "${selected_options[@]}" || contains 15 "${selected_options[@]}"; then
@@ -357,9 +357,6 @@ EOF"
         else
             print_success "Модули NVIDIA уже добавлены в mkinitcpio.conf"
         fi
-        
-        # Добавляем параметр ядра для nvidia_drm.modeset
-        run_command "echo 'nvidia_drm.modeset=1' | sudo tee /etc/kernel/cmdline.d/nvidia-drm.conf"
         
         # Настраиваем Pacman hooks для обновления initramfs при обновлении драйверов NVIDIA
         run_command "sudo mkdir -p /etc/pacman.d/hooks"
@@ -469,6 +466,12 @@ if contains 4 "${selected_options[@]}"; then
                 
                 for disk in $nvme_disks; do
                     if confirm "Форматировать /dev/$disk?"; then
+                        # Проверяем, смонтирован ли диск
+                        if grep -q "/dev/$disk" /proc/mounts; then
+                            print_warning "Диск /dev/$disk смонтирован. Размонтируем его."
+                            run_command "sudo umount /dev/$disk*"
+                        fi
+                        
                         # Создание GPT таблицы разделов
                         run_command "sudo parted /dev/$disk mklabel gpt"
                         
@@ -517,6 +520,12 @@ if contains 4 "${selected_options[@]}"; then
                 
                 for disk in $hdd_disks; do
                     if confirm "Форматировать /dev/$disk?"; then
+                        # Проверяем, смонтирован ли диск
+                        if grep -q "/dev/$disk" /proc/mounts; then
+                            print_warning "Диск /dev/$disk смонтирован. Размонтируем его."
+                            run_command "sudo umount /dev/$disk*"
+                        fi
+                        
                         # Оптимизация HDD перед форматированием
                         run_command "sudo hdparm -W 1 /dev/$disk"  # Включение кэша записи
                         run_command "sudo hdparm -B 127 -S 120 /dev/$disk"  # Настройка энергосбережения
@@ -579,11 +588,8 @@ if contains 5 "${selected_options[@]}"; then
         rootflags=$(echo "$current_cmdline" | grep -o "rootflags=[^ ]*" || echo "")
         rootfstype=$(echo "$current_cmdline" | grep -o "rootfstype=[^ ]*" || echo "")
         
-        # Загружаем сохраненный параметр nvidia_drm.modeset, если есть
-        nvidia_drm_param=""
-        if [ -f "/etc/kernel/cmdline.d/nvidia-drm.conf" ]; then
-            nvidia_drm_param=$(cat /etc/kernel/cmdline.d/nvidia-drm.conf)
-        fi
+        # Добавляем параметр nvidia_drm.modeset=1 без проверки файла
+        nvidia_drm_param="nvidia_drm.modeset=1"
         
         # Параметры тихой загрузки
         quiet_params="quiet loglevel=3 rd.systemd.show_status=false rd.udev.log_level=3 vt.global_cursor_default=0 splash plymouth.enable=1"
@@ -631,7 +637,7 @@ title Arch Linux Zen
 linux /vmlinuz-linux-zen
 initrd /intel-ucode.img
 initrd /initramfs-linux-zen.img
-options $combined_params
+options $(cat /etc/kernel/cmdline.d/quiet.conf)
 EOF
         
         # Обновление загрузчика
@@ -757,8 +763,7 @@ if contains 9 "${selected_options[@]}"; then
         print_warning "Не найдена директория Steam. Возможно, Steam не установлен или не запускался."
         if ! confirm "Продолжить установку Proton GE?"; then
             print_warning "Пропускаем установку Proton GE"
-        else
-            run_command "mkdir -p ~/.steam/root/compatibilitytools.d/"
+            continue
         fi
     fi
     
@@ -871,8 +876,18 @@ EOF
         # Обновление правил udev
         run_command "sudo udevadm control --reload-rules"
         
-        # Убедиться, что drm рендеринг включен для GNOME
-        run_command "gsettings set org.gnome.mutter experimental-features \"['kms-modifiers']\""
+        # Создаем файл автозапуска для настройки GNOME Mutter
+        mkdir -p ~/.config/autostart
+        cat << EOF > ~/.config/autostart/nvidia-mutter-config.desktop
+[Desktop Entry]
+Type=Application
+Name=NVIDIA Mutter Config
+Exec=gsettings set org.gnome.mutter experimental-features "['kms-modifiers']"
+Comment=Set GNOME Mutter experimental features for NVIDIA
+Terminal=false
+Hidden=false
+X-GNOME-Autostart-enabled=true
+EOF
         
         print_success "Оптимизация для Wayland с NVIDIA завершена"
     else
