@@ -530,31 +530,15 @@ if contains 11 "${selected_options[@]}"; then
 ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", RUN+="/usr/bin/hdparm -B 127 -S 120 /dev/%k"
 EOF
     
-    # Настройка systemd timer для регулярного применения настроек
-    cat << EOF | sudo tee /etc/systemd/system/hdparm-idle.service > /dev/null
-[Unit]
-Description=Set hard disk spindown timeout
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/hdparm -B 127 -S 120 /dev/sda
-ExecStart=/usr/bin/hdparm -B 127 -S 120 /dev/sdb
-EOF
+    # Применяем правила к текущим устройствам
+    for disk in /dev/sd?; do
+        if [ -b "$disk" ]; then
+            print_header "Применение настроек энергосбережения для $disk"
+            run_command "sudo hdparm -B 127 -S 120 $disk"
+        fi
+    done
     
-    cat << EOF | sudo tee /etc/systemd/system/hdparm-idle.timer > /dev/null
-[Unit]
-Description=Run hdparm spindown setting regularly
-
-[Timer]
-OnBootSec=1min
-OnUnitActiveSec=60min
-
-[Install]
-WantedBy=timers.target
-EOF
-    
-    run_command "sudo systemctl enable hdparm-idle.timer"
-    run_command "sudo systemctl start hdparm-idle.timer"
+    print_success "Настройка автоматического перехода HDD в спящий режим завершена"
     
     # Настройка планировщика для NVMe и HDD
     cat << EOF | sudo tee /etc/udev/rules.d/60-ioschedulers.rules > /dev/null
