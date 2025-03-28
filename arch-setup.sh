@@ -360,6 +360,24 @@ EOF"
         
         # Добавляем параметр ядра для nvidia_drm.modeset
         run_command "echo 'nvidia_drm.modeset=1' | sudo tee /etc/kernel/cmdline.d/nvidia-drm.conf"
+        
+        # Настраиваем Pacman hooks для обновления initramfs при обновлении драйверов NVIDIA
+        run_command "sudo mkdir -p /etc/pacman.d/hooks"
+        cat << EOF | sudo tee /etc/pacman.d/hooks/nvidia.hook > /dev/null
+[Trigger]
+Operation=Install
+Operation=Upgrade
+Operation=Remove
+Type=Package
+Target=nvidia-dkms
+Target=linux-zen
+
+[Action]
+Description=Update NVIDIA module in initcpio
+Depends=mkinitcpio
+When=PostTransaction
+Exec=/usr/bin/mkinitcpio -P
+EOF
     else
         print_warning "Пропускаем настройку NVIDIA из-за отсутствия необходимых пакетов"
     fi
@@ -561,11 +579,17 @@ if contains 5 "${selected_options[@]}"; then
         rootflags=$(echo "$current_cmdline" | grep -o "rootflags=[^ ]*" || echo "")
         rootfstype=$(echo "$current_cmdline" | grep -o "rootfstype=[^ ]*" || echo "")
         
+        # Загружаем сохраненный параметр nvidia_drm.modeset, если есть
+        nvidia_drm_param=""
+        if [ -f "/etc/kernel/cmdline.d/nvidia-drm.conf" ]; then
+            nvidia_drm_param=$(cat /etc/kernel/cmdline.d/nvidia-drm.conf)
+        fi
+        
         # Параметры тихой загрузки
         quiet_params="quiet loglevel=3 rd.systemd.show_status=false rd.udev.log_level=3 vt.global_cursor_default=0 splash plymouth.enable=1"
         
         # Комбинируем критические параметры с параметрами тихой загрузки
-        combined_params="$root_param $rootflags $rootfstype $quiet_params"
+        combined_params="$root_param $rootflags $rootfstype $nvidia_drm_param $quiet_params"
         
         # Создаем файл с параметрами
         cat << EOF | sudo tee /etc/kernel/cmdline.d/quiet.conf > /dev/null
@@ -797,21 +821,27 @@ if contains 10 "${selected_options[@]}"; then
     
     # Проверка необходимых пакетов
     if check_and_install_packages "Wayland" "qt6-wayland" "qt5-wayland" "xorg-xwayland"; then
-        # Добавляем переменные окружения для Wayland и NVIDIA (безопасная конфигурация)
-        cat << EOF | sudo tee -a /etc/environment > /dev/null
+        # Установка дополнительных пакетов для NVIDIA Wayland
+        run_command "sudo pacman -S --needed --noconfirm egl-wayland"
+        
+        # Проверка наличия mesa-utils (для glxinfo)
+        if ! check_package "mesa-utils"; then
+            run_command "sudo pacman -S --needed --noconfirm mesa-utils"
+        fi
+        
+        # Добавляем переменные окружения для Wayland и NVIDIA
+        cat << EOF | sudo tee /etc/environment > /dev/null
 # Настройки Wayland и NVIDIA
 LIBVA_DRIVER_NAME=nvidia
 GBM_BACKEND=nvidia-drm
 __GLX_VENDOR_LIBRARY_NAME=nvidia
+WLR_NO_HARDWARE_CURSORS=1
 MOZ_ENABLE_WAYLAND=1
 MOZ_WEBRENDER=1
 QT_QPA_PLATFORM=wayland
 QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 EOF
 
-        # Настройка egl-wayland для NVIDIA (необходимо для корректной работы)
-        run_command "sudo pacman -S --needed --noconfirm egl-wayland"
-        
         # Создание конфигурации для GDM
         run_command "sudo mkdir -p /etc/gdm"
         if [ ! -f /etc/gdm/custom.conf ]; then
@@ -831,7 +861,20 @@ WaylandEnable=true
 EOF
         fi
         
-        print_success "Оптимизация для Wayland завершена"
+        # Создание правила udev для NVIDIA и Wayland
+        cat << EOF | sudo tee /etc/udev/rules.d/61-nvidia-wayland.rules > /dev/null
+# Enable DRM KMS for NVIDIA GPUs
+ACTION=="add", KERNEL=="nvidia", RUN+="/usr/bin/nvidia-modprobe"
+ACTION=="add", KERNEL=="nvidia", RUN+="/usr/bin/nvidia-modprobe -c0 -m"
+EOF
+
+        # Обновление правил udev
+        run_command "sudo udevadm control --reload-rules"
+        
+        # Убедиться, что drm рендеринг включен для GNOME
+        run_command "gsettings set org.gnome.mutter experimental-features \"['kms-modifiers']\""
+        
+        print_success "Оптимизация для Wayland с NVIDIA завершена"
     else
         print_warning "Пропускаем оптимизацию для Wayland из-за отсутствия необходимых пакетов"
     fi
