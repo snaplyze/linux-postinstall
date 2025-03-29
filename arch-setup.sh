@@ -2,7 +2,7 @@
 
 # arch-setup.sh - Полный скрипт настройки Arch Linux с GNOME 48
 # Разработан для: Intel Core i7 13700k, RTX 4090, 32 ГБ ОЗУ, 4 NVME Gen4, 2 HDD
-# Версия: 1.5 (Март 2025)
+# Версия: 1.6 (Март 2025)
 
 # Цвета для вывода
 RED="\033[0;31m"
@@ -104,6 +104,25 @@ check_and_install_packages() {
     fi
 }
 
+# Функция для диагностики NVIDIA и Wayland
+diagnose_nvidia_wayland() {
+    print_header "Диагностика NVIDIA и Wayland"
+    echo "Проверка загруженных модулей NVIDIA:"
+    lsmod | grep nvidia || echo "Модули NVIDIA не загружены!"
+    
+    echo -e "\nПроверка устройств NVIDIA:"
+    ls -la /dev/nvidia* 2>/dev/null || echo "Устройства NVIDIA не найдены!"
+    
+    echo -e "\nЖурнал GDM (последние 20 записей):"
+    journalctl -b -u gdm.service | tail -n 20
+    
+    echo -e "\nЖурнал NVIDIA (последние 20 записей):"
+    journalctl -b | grep -i nvidia | tail -n 20
+    
+    echo -e "\nЖурнал сессии GNOME (последние 20 записей):"
+    journalctl -b | grep -i gnome | tail -n 20
+}
+
 # Проверка системных требований и предварительных условий
 print_header "Проверка системных требований"
 
@@ -175,22 +194,24 @@ fi
 # Вывод меню выбора действий
 print_header "Выберите операции для выполнения"
 echo "1. Обновление системы и базовая настройка"
-echo "2. Установка драйверов NVIDIA и настройка для Wayland"
-echo "3. Оптимизация NVMe и HDD"
-echo "4. Форматирование дополнительных дисков"
-echo "5. Скрытие логов при загрузке"
-echo "6. Установка Paru в скрытую папку"
-echo "7. Настройка Flathub и GNOME Software"
-echo "8. Установка Steam и библиотек"
-echo "9. Установка Proton GE"
-echo "10. Оптимизация для Wayland"
-echo "11. Настройка управления питанием"
-echo "12. Настройка локализации и безопасности"
-echo "13. Установка дополнительных программ"
-echo "14. Установка Timeshift для резервного копирования"
-echo "15. Настройка современного аудио-стека (PipeWire)"
-echo "16. Оптимизация памяти и особенности для игр"
-echo "17. Все операции (1-16)"
+echo "2. Установка GNOME и базовых компонентов (делать до NVIDIA!)"
+echo "3. Установка драйверов NVIDIA и настройка для Wayland"
+echo "4. Оптимизация NVMe и HDD"
+echo "5. Форматирование дополнительных дисков"
+echo "6. Скрытие логов при загрузке"
+echo "7. Установка Paru в скрытую папку"
+echo "8. Настройка Flathub и GNOME Software"
+echo "9. Установка Steam и библиотек"
+echo "10. Установка Proton GE"
+echo "11. Оптимизация для Wayland"
+echo "12. Настройка управления питанием"
+echo "13. Настройка локализации и безопасности"
+echo "14. Установка дополнительных программ"
+echo "15. Установка Timeshift для резервного копирования"
+echo "16. Настройка современного аудио-стека (PipeWire)"
+echo "17. Оптимизация памяти и особенности для игр"
+echo "18. Диагностика NVIDIA и Wayland"
+echo "19. Все операции (1-17)"
 echo "0. Выход"
 
 read -p "Введите номера операций через пробел (например: 1 2 3): " choices
@@ -199,8 +220,8 @@ read -p "Введите номера операций через пробел (�
 IFS=' ' read -r -a selected_options <<< "$choices"
 
 # Если выбрана опция "Все операции", устанавливаем все опции
-if [[ " ${selected_options[@]} " =~ " 17 " ]]; then
-    selected_options=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16)
+if [[ " ${selected_options[@]} " =~ " 19 " ]]; then
+    selected_options=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17)
 fi
 
 # Проверяем, содержит ли массив определенную опцию
@@ -220,59 +241,63 @@ print_header "Предварительная проверка необходим
 
 all_required_packages=()
 
-if contains 1 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 1 "${selected_options[@]}" || contains 19 "${selected_options[@]}"; then
     all_required_packages+=("base-devel" "git" "curl" "wget")
 fi
 
-if contains 2 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 2 "${selected_options[@]}" || contains 19 "${selected_options[@]}"; then
+    all_required_packages+=("gnome-shell" "gnome-session" "gdm" "xorg-server-xwayland" "gnome-control-center")
+fi
+
+if contains 3 "${selected_options[@]}" || contains 19 "${selected_options[@]}"; then
     all_required_packages+=("nvidia-dkms" "nvidia-utils" "nvidia-settings" "libva-nvidia-driver")
 fi
 
-if contains 3 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 4 "${selected_options[@]}" || contains 19 "${selected_options[@]}"; then
     all_required_packages+=("nvme-cli" "hdparm" "smartmontools")
     if [ "$ZRAM_CONFIGURED" = "false" ]; then
         all_required_packages+=("zram-generator")
     fi
 fi
 
-if contains 4 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 5 "${selected_options[@]}" || contains 19 "${selected_options[@]}"; then
     all_required_packages+=("parted" "gvfs" "util-linux" "e2fsprogs")
 fi
 
-if contains 5 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 6 "${selected_options[@]}" || contains 19 "${selected_options[@]}"; then
     all_required_packages+=("plymouth")
 fi
 
-if contains 7 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 8 "${selected_options[@]}" || contains 19 "${selected_options[@]}"; then
     all_required_packages+=("flatpak" "gnome-software")
 fi
 
-if contains 8 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 9 "${selected_options[@]}" || contains 19 "${selected_options[@]}"; then
     all_required_packages+=("steam" "lib32-nvidia-utils" "lib32-vulkan-icd-loader" "vulkan-tools" 
                            "xorg-mkfontscale" "xorg-fonts-cyrillic" "xorg-fonts-misc")
 fi
 
-if contains 10 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 11 "${selected_options[@]}" || contains 19 "${selected_options[@]}"; then
     all_required_packages+=("qt6-wayland" "qt5-wayland" "xorg-xwayland" "egl-wayland")
 fi
 
-if contains 11 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 12 "${selected_options[@]}" || contains 19 "${selected_options[@]}"; then
     all_required_packages+=("power-profiles-daemon" "hdparm")
 fi
 
-if contains 12 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 13 "${selected_options[@]}" || contains 19 "${selected_options[@]}"; then
     all_required_packages+=("ufw")
 fi
 
-if contains 13 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 14 "${selected_options[@]}" || contains 19 "${selected_options[@]}"; then
     all_required_packages+=("htop" "neofetch" "bat" "exa" "ripgrep" "fd" "gnome-keyring" "seahorse")
 fi
 
-if contains 14 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 15 "${selected_options[@]}" || contains 19 "${selected_options[@]}"; then
     all_required_packages+=("timeshift")
 fi
 
-if contains 15 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 16 "${selected_options[@]}" || contains 19 "${selected_options[@]}"; then
     all_required_packages+=("pipewire" "pipewire-alsa" "pipewire-pulse" "pipewire-jack" "wireplumber" "gst-plugin-pipewire")
 fi
 
@@ -322,30 +347,54 @@ if contains 1 "${selected_options[@]}"; then
     fi
 fi
 
-# 2. Установка драйверов NVIDIA и настройка для Wayland
+# 2. Установка GNOME и базовых компонентов (перед NVIDIA)
 if contains 2 "${selected_options[@]}"; then
-    print_header "2. Установка драйверов NVIDIA и настройка для Wayland"
+    print_header "2. Установка GNOME и базовых компонентов"
+    
+    # Проверка необходимых пакетов
+    if check_and_install_packages "GNOME" "gnome-shell" "gnome-session" "gdm" "xorg-server-xwayland" "gnome-control-center"; then
+        # Очистка потенциально конфликтующих конфигураций
+        run_command "sudo rm -f /etc/X11/xorg.conf /etc/X11/xorg.conf.d/20-nvidia.conf"
+        run_command "sudo rm -f ~/.nvidia-settings-rc"
+        
+        # Настройка дисплейного менеджера GDM
+        run_command "sudo systemctl enable gdm"
+        print_success "Дисплейный менеджер GDM настроен и будет запущен при следующей загрузке"
+        
+        # Опционально: установка дополнительных компонентов GNOME
+        if confirm "Установить дополнительные компоненты GNOME?"; then
+            run_command "sudo pacman -S --needed --noconfirm gnome-terminal gnome-tweaks"
+            print_success "Дополнительные компоненты GNOME установлены"
+        fi
+    else
+        print_warning "Пропускаем установку GNOME из-за отсутствия необходимых пакетов"
+    fi
+fi
+
+# 3. Установка драйверов NVIDIA и настройка для Wayland (после GNOME)
+if contains 3 "${selected_options[@]}"; then
+    print_header "3. Установка драйверов NVIDIA и настройка для Wayland"
     
     # Проверка необходимых пакетов
     if check_and_install_packages "Драйверы NVIDIA" "nvidia-dkms" "nvidia-utils" "nvidia-settings" "libva-nvidia-driver"; then
         # Создание конфигурационных директорий
         run_command "sudo mkdir -p /etc/modprobe.d/"
         
+        # Настройка NVIDIA для KMS
+        cat << EOF | sudo tee /etc/modprobe.d/nvidia-kms.conf > /dev/null
+options nvidia-drm modeset=1
+options nvidia-drm fbdev=1
+EOF
+
         # Настройка модулей NVIDIA для Wayland
         cat << EOF | sudo tee /etc/modprobe.d/nvidia.conf > /dev/null
-options nvidia-drm modeset=1
 options nvidia NVreg_PreserveVideoMemoryAllocations=1
-options nvidia NVreg_RegistryDwords=RMCleanupInSmoMode=0x1
+options nvidia NVreg_RegistryDwords="PowerMizerEnable=0x1; PerfLevelSrc=0x2222; PowerMizerLevel=0x3; PowerMizerDefault=0x3; PowerMizerDefaultAC=0x3"
 EOF
 
         # Настройка управления питанием NVIDIA
         cat << EOF | sudo tee /etc/modprobe.d/nvidia-power-management.conf > /dev/null
 options nvidia NVreg_DynamicPowerManagement=0x02
-EOF
-
-        # Явная настройка modeset для nvidia-drm
-        cat << EOF | sudo tee /etc/modprobe.d/nvidia-drm.conf > /dev/null
-options nvidia-drm modeset=1
 EOF
 
         # Блокировка nouveau
@@ -354,19 +403,14 @@ blacklist nouveau
 options nouveau modeset=0
 EOF
         
-        # Добавление модулей NVIDIA в initramfs в правильном порядке
-        run_command "sudo mkdir -p /etc/mkinitcpio.conf.d/"
-        
-        # Создание отдельного конфига для модулей NVIDIA, чтобы не изменять основной файл
-        cat << EOF | sudo tee /etc/mkinitcpio.conf.d/nvidia.conf > /dev/null
-MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)
-EOF
+        # Прямое обновление mkinitcpio.conf с модулями NVIDIA
+        if ! grep -q "nvidia nvidia_modeset nvidia_uvm nvidia_drm" /etc/mkinitcpio.conf; then
+            run_command "sudo sed -i 's/MODULES=.*/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf"
+        fi
         
         # Добавление KMS в hooks для раннего запуска
         if ! grep -q "kms" /etc/mkinitcpio.conf; then
-            run_command "sudo sed -i '/^HOOKS=/ s/udev/udev kms/' /etc/mkinitcpio.conf"
-        else
-            print_success "KMS уже добавлен в HOOKS mkinitcpio.conf"
+            run_command "sudo sed -i 's/HOOKS=.*/HOOKS=(base udev kms autodetect modconf block filesystems keyboard fsck)/' /etc/mkinitcpio.conf"
         fi
         
         # Настраиваем Pacman hooks для обновления initramfs при обновлении драйверов NVIDIA
@@ -388,6 +432,57 @@ When=PostTransaction
 Exec=/usr/bin/mkinitcpio -P
 EOF
 
+        # Установка параметров ядра для NVIDIA
+        run_command "sudo mkdir -p /etc/kernel/cmdline.d/"
+        cat << EOF | sudo tee /etc/kernel/cmdline.d/nvidia.conf > /dev/null
+nvidia_drm.modeset=1 nvidia_drm.fbdev=1 nvidia.NVreg_PreserveVideoMemoryAllocations=1
+EOF
+
+        # Настройка GDM для работы с NVIDIA + Wayland
+        run_command "sudo mkdir -p /etc/gdm"
+        cat << EOF | sudo tee /etc/gdm/custom.conf > /dev/null
+[daemon]
+WaylandEnable=true
+DefaultSession=gnome-wayland.desktop
+
+# Важные опции для NVIDIA
+X-Direct-Graphics=true
+
+[security]
+DisallowTCP=false
+
+[xdmcp]
+
+[chooser]
+
+[debug]
+EOF
+
+        # Создание правила udev для NVIDIA и Wayland
+        cat << EOF | sudo tee /etc/udev/rules.d/61-nvidia-wayland.rules > /dev/null
+# Enable DRM KMS for NVIDIA GPUs
+ACTION=="add", KERNEL=="nvidia", RUN+="/usr/bin/nvidia-modprobe"
+ACTION=="add", KERNEL=="nvidia", RUN+="/usr/bin/nvidia-modprobe -c0 -m"
+EOF
+
+        # Обновление правил udev
+        run_command "sudo udevadm control --reload-rules"
+
+        # Добавляем переменные окружения для Wayland и NVIDIA
+        cat << EOF | sudo tee /etc/environment > /dev/null
+# Настройки Wayland и NVIDIA
+LIBVA_DRIVER_NAME=nvidia
+GBM_BACKEND=nvidia-drm
+__GLX_VENDOR_LIBRARY_NAME=nvidia
+WLR_NO_HARDWARE_CURSORS=1
+MOZ_ENABLE_WAYLAND=1
+MOZ_WEBRENDER=1
+QT_QPA_PLATFORM=wayland
+QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+__GL_THREADED_OPTIMIZATIONS=1
+__GL_MaxFramesAllowed=1
+EOF
+
         # Перестроение initramfs
         run_command "sudo mkinitcpio -P linux-zen" "critical"
         print_success "Конфигурация NVIDIA для Wayland настроена"
@@ -396,9 +491,9 @@ EOF
     fi
 fi
 
-# 3. Оптимизация NVMe и HDD
-if contains 3 "${selected_options[@]}"; then
-    print_header "3. Оптимизация NVMe и HDD"
+# 4. Оптимизация NVMe и HDD
+if contains 4 "${selected_options[@]}"; then
+    print_header "4. Оптимизация NVMe и HDD"
     
     # Проверка наличия необходимых утилит
     if check_and_install_packages "Утилиты NVMe и HDD" "nvme-cli" "hdparm" "smartmontools"; then
@@ -431,7 +526,7 @@ EOF
 fi
 
 # Добавляем раздел для настройки ZRAM, если он не настроен
-if contains 3 "${selected_options[@]}" && [ "$ZRAM_CONFIGURED" = "false" ]; then
+if contains 4 "${selected_options[@]}" && [ "$ZRAM_CONFIGURED" = "false" ]; then
     print_header "Настройка ZRAM"
     
     # Проверка наличия необходимых пакетов
@@ -453,9 +548,9 @@ EOF
     fi
 fi
 
-# 4. Форматирование дополнительных дисков
-if contains 4 "${selected_options[@]}"; then
-    print_header "4. Форматирование дополнительных дисков"
+# 5. Форматирование дополнительных дисков
+if contains 5 "${selected_options[@]}"; then
+    print_header "5. Форматирование дополнительных дисков"
     
     # Проверка наличия необходимых пакетов
     if check_and_install_packages "Форматирование дисков" "parted" "e2fsprogs" "gvfs" "gvfs-mtp" "gvfs-smb"; then
@@ -586,9 +681,9 @@ if contains 4 "${selected_options[@]}"; then
     fi
 fi
 
-# 5. Скрытие логов при загрузке
-if contains 5 "${selected_options[@]}"; then
-    print_header "5. Скрытие логов при загрузке"
+# 6. Скрытие логов при загрузке
+if contains 6 "${selected_options[@]}"; then
+    print_header "6. Скрытие логов при загрузке"
     
     # Проверка наличия необходимых пакетов
     if check_and_install_packages "Plymouth" "plymouth"; then
@@ -605,11 +700,10 @@ if contains 5 "${selected_options[@]}"; then
         rootfstype=$(echo "$current_cmdline" | grep -o "rootfstype=[^ ]*" || echo "")
         
         # Параметры для NVIDIA и тихой загрузки
-        nvidia_params="nvidia_drm.modeset=1 nvidia.NVreg_PreserveVideoMemoryAllocations=1"
         quiet_params="quiet loglevel=3 rd.systemd.show_status=false rd.udev.log_level=3 vt.global_cursor_default=0 splash plymouth.enable=1"
         
         # Комбинируем критические параметры с параметрами тихой загрузки
-        combined_params="$root_param $rootflags $rootfstype $nvidia_params $quiet_params"
+        combined_params="$root_param $rootflags $rootfstype $quiet_params"
         
         # Создаем файл с параметрами
         cat << EOF | sudo tee /etc/kernel/cmdline.d/quiet.conf > /dev/null
@@ -639,7 +733,7 @@ EOF
         # Создание конфигурации systemd-boot
         cat << EOF | sudo tee /boot/loader/loader.conf > /dev/null
 default arch-zen.conf
-timeout 0
+timeout 2
 console-mode max
 editor no
 EOF
@@ -651,7 +745,16 @@ title Arch Linux Zen
 linux /vmlinuz-linux-zen
 initrd /intel-ucode.img
 initrd /initramfs-linux-zen.img
-options $(cat /etc/kernel/cmdline.d/quiet.conf)
+options $(cat /etc/kernel/cmdline.d/quiet.conf) $(cat /etc/kernel/cmdline.d/nvidia.conf)
+EOF
+
+        # Создание альтернативной загрузочной записи для X11
+        cat << EOF | sudo tee /boot/loader/entries/arch-zen-x11.conf > /dev/null
+title Arch Linux Zen (X11 fallback)
+linux /vmlinuz-linux-zen
+initrd /intel-ucode.img
+initrd /initramfs-linux-zen.img
+options $(cat /etc/kernel/cmdline.d/quiet.conf | sed 's/quiet/nomodeset quiet/')
 EOF
         
         # Обновление загрузчика
@@ -663,9 +766,9 @@ EOF
     fi
 fi
 
-# 6. Установка Paru в скрытую папку
-if contains 6 "${selected_options[@]}"; then
-    print_header "6. Установка Paru в скрытую папку"
+# 7. Установка Paru в скрытую папку
+if contains 7 "${selected_options[@]}"; then
+    print_header "7. Установка Paru в скрытую папку"
     
     # Проверка необходимых пакетов
     if check_and_install_packages "Сборка пакетов" "base-devel" "git"; then
@@ -710,9 +813,9 @@ EOF
     fi
 fi
 
-# 7. Настройка Flathub и GNOME Software
-if contains 7 "${selected_options[@]}"; then
-    print_header "7. Настройка Flathub и GNOME Software"
+# 8. Настройка Flathub и GNOME Software
+if contains 8 "${selected_options[@]}"; then
+    print_header "8. Настройка Flathub и GNOME Software"
     
     # Проверка необходимых пакетов
     if check_and_install_packages "Flatpak" "flatpak" "gnome-software"; then
@@ -741,9 +844,9 @@ if contains 7 "${selected_options[@]}"; then
     fi
 fi
 
-# 8. Установка Steam и библиотек
-if contains 8 "${selected_options[@]}"; then
-    print_header "8. Установка Steam и библиотек"
+# 9. Установка Steam и библиотек
+if contains 9 "${selected_options[@]}"; then
+    print_header "9. Установка Steam и библиотек"
     
     # Включение multilib репозитория
     if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
@@ -768,9 +871,9 @@ if contains 8 "${selected_options[@]}"; then
     fi
 fi
 
-# 9. Установка Proton GE
-if contains 9 "${selected_options[@]}"; then
-    print_header "9. Установка Proton GE"
+# 10. Установка Proton GE
+if contains 10 "${selected_options[@]}"; then
+    print_header "10. Установка Proton GE"
     
     # Проверяем наличие пути Steam
     if [ ! -d "$HOME/.steam" ]; then
@@ -814,7 +917,7 @@ if contains 9 "${selected_options[@]}"; then
             fi
         fi
     else
-        print_warning "Paru не установлен. Невозможно установить Proton GE из AUR. Рекомендуется сначала выполнить шаг 6."
+        print_warning "Paru не установлен. Невозможно установить Proton GE из AUR. Рекомендуется сначала выполнить шаг 7."
         # Предлагаем ручную установку
         if check_and_install_packages "Загрузка файлов" "curl" "wget"; then
             if confirm "Установить Proton GE вручную?"; then
@@ -834,9 +937,9 @@ if contains 9 "${selected_options[@]}"; then
     print_success "Установка Proton GE завершена"
 fi
 
-# 10. Оптимизация для Wayland
-if contains 10 "${selected_options[@]}"; then
-    print_header "10. Оптимизация для Wayland"
+# 11. Оптимизация для Wayland
+if contains 11 "${selected_options[@]}"; then
+    print_header "11. Оптимизация для Wayland"
     
     # Проверка необходимых пакетов
     if check_and_install_packages "Wayland" "qt6-wayland" "qt5-wayland" "xorg-xwayland"; then
@@ -847,48 +950,6 @@ if contains 10 "${selected_options[@]}"; then
         if ! check_package "mesa-utils"; then
             run_command "sudo pacman -S --needed --noconfirm mesa-utils"
         fi
-        
-        # Добавляем переменные окружения для Wayland и NVIDIA
-        cat << EOF | sudo tee /etc/environment > /dev/null
-# Настройки Wayland и NVIDIA
-LIBVA_DRIVER_NAME=nvidia
-GBM_BACKEND=nvidia-drm
-__GLX_VENDOR_LIBRARY_NAME=nvidia
-WLR_NO_HARDWARE_CURSORS=1
-MOZ_ENABLE_WAYLAND=1
-MOZ_WEBRENDER=1
-QT_QPA_PLATFORM=wayland
-QT_WAYLAND_DISABLE_WINDOWDECORATION=1
-EOF
-
-        # Создание конфигурации для GDM
-        run_command "sudo mkdir -p /etc/gdm"
-        cat << EOF | sudo tee /etc/gdm/custom.conf > /dev/null
-# GDM configuration
-[daemon]
-# Автоматически включаем Wayland
-WaylandEnable=true
-# Устанавливаем сессию по умолчанию
-DefaultSession=gnome-wayland.desktop
-
-[security]
-
-[xdmcp]
-
-[chooser]
-
-[debug]
-EOF
-        
-        # Создание правила udev для NVIDIA и Wayland
-        cat << EOF | sudo tee /etc/udev/rules.d/61-nvidia-wayland.rules > /dev/null
-# Enable DRM KMS for NVIDIA GPUs
-ACTION=="add", KERNEL=="nvidia", RUN+="/usr/bin/nvidia-modprobe"
-ACTION=="add", KERNEL=="nvidia", RUN+="/usr/bin/nvidia-modprobe -c0 -m"
-EOF
-
-        # Обновление правил udev
-        run_command "sudo udevadm control --reload-rules"
         
         # Создаем файл автозапуска для настройки GNOME Mutter
         mkdir -p ~/.config/autostart
@@ -909,9 +970,9 @@ EOF
     fi
 fi
 
-# 11. Настройка управления питанием
-if contains 11 "${selected_options[@]}"; then
-    print_header "11. Настройка управления питанием"
+# 12. Настройка управления питанием
+if contains 12 "${selected_options[@]}"; then
+    print_header "12. Настройка управления питанием"
     
     # Проверка необходимых пакетов
     if check_and_install_packages "Управление питанием" "power-profiles-daemon" "hdparm"; then
@@ -982,9 +1043,9 @@ EOF
     fi
 fi
 
-# 12. Настройка локализации и безопасности
-if contains 12 "${selected_options[@]}"; then
-    print_header "12. Настройка локализации и безопасности"
+# 13. Настройка локализации и безопасности
+if contains 13 "${selected_options[@]}"; then
+    print_header "13. Настройка локализации и безопасности"
     
     # Настройка русской локали
     if ! grep -q "ru_RU.UTF-8 UTF-8" /etc/locale.gen; then
@@ -1022,9 +1083,9 @@ if contains 12 "${selected_options[@]}"; then
     print_success "Настройка локализации и безопасности завершена"
 fi
 
-# 13. Установка дополнительных программ
-if contains 13 "${selected_options[@]}"; then
-    print_header "13. Установка дополнительных программ"
+# 14. Установка дополнительных программ
+if contains 14 "${selected_options[@]}"; then
+    print_header "14. Установка дополнительных программ"
     
     # Проверка необходимых пакетов
     utils=("htop" "neofetch" "bat" "exa" "ripgrep" "fd")
@@ -1047,9 +1108,9 @@ if contains 13 "${selected_options[@]}"; then
     print_success "Установка дополнительных программ завершена"
 fi
 
-# 14. Установка Timeshift для резервного копирования
-if contains 14 "${selected_options[@]}"; then
-    print_header "14. Установка Timeshift для резервного копирования"
+# 15. Установка Timeshift для резервного копирования
+if contains 15 "${selected_options[@]}"; then
+    print_header "15. Установка Timeshift для резервного копирования"
     
     # Проверка необходимых пакетов
     if check_and_install_packages "Резервное копирование" "timeshift"; then
@@ -1068,9 +1129,9 @@ if contains 14 "${selected_options[@]}"; then
     print_success "Установка Timeshift завершена"
 fi
 
-# 15. Настройка современного аудио-стека (PipeWire)
-if contains 15 "${selected_options[@]}"; then
-    print_header "15. Настройка современного аудио-стека PipeWire"
+# 16. Настройка современного аудио-стека (PipeWire)
+if contains 16 "${selected_options[@]}"; then
+    print_header "16. Настройка современного аудио-стека PipeWire"
     
     # Проверка необходимых пакетов
     audio_packages=("pipewire" "pipewire-alsa" "pipewire-pulse" "pipewire-jack" "wireplumber" "gst-plugin-pipewire")
@@ -1100,9 +1161,9 @@ EOF
     fi
 fi
 
-# 16. Оптимизация памяти и особенности для игр
-if contains 16 "${selected_options[@]}"; then
-    print_header "16. Оптимизация памяти для игр"
+# 17. Оптимизация памяти и особенности для игр
+if contains 17 "${selected_options[@]}"; then
+    print_header "17. Оптимизация памяти для игр"
     
     cat << EOF | sudo tee /etc/sysctl.d/99-gaming-performance.conf > /dev/null
 # Уменьшение задержки обмена данными для улучшения отзывчивости в играх
@@ -1148,6 +1209,11 @@ EOF
     print_success "Оптимизация памяти для игр завершена"
 fi
 
+# 18. Диагностика NVIDIA и Wayland
+if contains 18 "${selected_options[@]}"; then
+    diagnose_nvidia_wayland
+fi
+
 # Финальная проверка и перезагрузка
 print_header "Все операции завершены"
 
@@ -1171,6 +1237,13 @@ if ! sudo findmnt -n -o SOURCE / &> /dev/null; then
     print_error "Проблема с fstab. Проверьте монтирование корневого раздела."
     errors=$((errors+1))
 fi
+
+# Печать рекомендаций
+print_header "Рекомендации по устранению проблем"
+echo "1. Если после перезагрузки появится серый экран с курсором, используйте Alt+F2 для переключения на консоль."
+echo "2. В консоли выполните диагностическую команду: journalctl -b | grep -i nvidia | tail -n 30"
+echo "3. В загрузчике systemd-boot выберите опцию 'Arch Linux Zen (X11 fallback)' для загрузки с X11 вместо Wayland."
+echo "4. После загрузки запустите скрипт снова и выберите пункт '18. Диагностика NVIDIA и Wayland' для анализа."
 
 if [ $errors -eq 0 ]; then
     print_success "Все проверки пройдены успешно!"
