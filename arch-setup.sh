@@ -2,7 +2,7 @@
 
 # arch-setup.sh - Полный скрипт настройки Arch Linux с GNOME 48
 # Разработан для: Intel Core i7 13700k, RTX 4090, 32 ГБ ОЗУ, 4 NVME Gen4, 2 HDD
-# Версия: 1.6 (Март 2025)
+# Версия: 1.8 (Март 2025)
 
 # Цвета для вывода
 RED="\033[0;31m"
@@ -190,7 +190,8 @@ echo "13. Установка дополнительных программ"
 echo "14. Установка Timeshift для резервного копирования"
 echo "15. Настройка современного аудио-стека (PipeWire)"
 echo "16. Оптимизация памяти и особенности для игр"
-echo "17. Все операции (1-16)"
+echo "17. Настройка функциональных клавиш (F1-F12)"
+echo "18. Все операции (1-17)"
 echo "0. Выход"
 
 read -p "Введите номера операций через пробел (например: 1 2 3): " choices
@@ -199,8 +200,8 @@ read -p "Введите номера операций через пробел (�
 IFS=' ' read -r -a selected_options <<< "$choices"
 
 # Если выбрана опция "Все операции", устанавливаем все опции
-if [[ " ${selected_options[@]} " =~ " 17 " ]]; then
-    selected_options=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16)
+if [[ " ${selected_options[@]} " =~ " 18 " ]]; then
+    selected_options=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17)
 fi
 
 # Проверяем, содержит ли массив определенную опцию
@@ -220,59 +221,59 @@ print_header "Предварительная проверка необходим
 
 all_required_packages=()
 
-if contains 1 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 1 "${selected_options[@]}" || contains 18 "${selected_options[@]}"; then
     all_required_packages+=("base-devel" "git" "curl" "wget")
 fi
 
-if contains 2 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 2 "${selected_options[@]}" || contains 18 "${selected_options[@]}"; then
     all_required_packages+=("nvidia-dkms" "nvidia-utils" "nvidia-settings" "libva-nvidia-driver")
 fi
 
-if contains 3 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 3 "${selected_options[@]}" || contains 18 "${selected_options[@]}"; then
     all_required_packages+=("nvme-cli" "hdparm" "smartmontools")
     if [ "$ZRAM_CONFIGURED" = "false" ]; then
         all_required_packages+=("zram-generator")
     fi
 fi
 
-if contains 4 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 4 "${selected_options[@]}" || contains 18 "${selected_options[@]}"; then
     all_required_packages+=("parted" "gvfs" "util-linux" "e2fsprogs")
 fi
 
-if contains 5 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 5 "${selected_options[@]}" || contains 18 "${selected_options[@]}"; then
     all_required_packages+=("plymouth")
 fi
 
-if contains 7 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 7 "${selected_options[@]}" || contains 18 "${selected_options[@]}"; then
     all_required_packages+=("flatpak" "gnome-software")
 fi
 
-if contains 8 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 8 "${selected_options[@]}" || contains 18 "${selected_options[@]}"; then
     all_required_packages+=("steam" "lib32-nvidia-utils" "lib32-vulkan-icd-loader" "vulkan-tools" 
                            "xorg-mkfontscale" "xorg-fonts-cyrillic" "xorg-fonts-misc")
 fi
 
-if contains 10 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 10 "${selected_options[@]}" || contains 18 "${selected_options[@]}"; then
     all_required_packages+=("qt6-wayland" "qt5-wayland" "xorg-xwayland" "egl-wayland")
 fi
 
-if contains 11 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 11 "${selected_options[@]}" || contains 18 "${selected_options[@]}"; then
     all_required_packages+=("power-profiles-daemon" "hdparm")
 fi
 
-if contains 12 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 12 "${selected_options[@]}" || contains 18 "${selected_options[@]}"; then
     all_required_packages+=("ufw")
 fi
 
-if contains 13 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 13 "${selected_options[@]}" || contains 18 "${selected_options[@]}"; then
     all_required_packages+=("htop" "neofetch" "bat" "exa" "ripgrep" "fd" "gnome-keyring" "seahorse")
 fi
 
-if contains 14 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 14 "${selected_options[@]}" || contains 18 "${selected_options[@]}"; then
     all_required_packages+=("timeshift")
 fi
 
-if contains 15 "${selected_options[@]}" || contains 17 "${selected_options[@]}"; then
+if contains 15 "${selected_options[@]}" || contains 18 "${selected_options[@]}"; then
     all_required_packages+=("pipewire" "pipewire-alsa" "pipewire-pulse" "pipewire-jack" "wireplumber" "gst-plugin-pipewire")
 fi
 
@@ -1117,6 +1118,34 @@ EOF
     fi
     
     print_success "Оптимизация памяти для игр завершена"
+fi
+
+# 17. Настройка функциональных клавиш (F1-F12)
+if contains 17 "${selected_options[@]}"; then
+    print_header "17. Настройка функциональных клавиш (F1-F12)"
+    
+    # Системная настройка на уровне ядра
+    grep -q "fnmode=2" /etc/modprobe.d/hid_apple.conf 2>/dev/null || { 
+        echo "Настройка драйвера клавиатуры..."; 
+        echo "options hid_apple fnmode=2" | sudo tee /etc/modprobe.d/hid_apple.conf > /dev/null && 
+        sudo mkinitcpio -P && 
+        echo "Настройка драйвера клавиатуры завершена"; 
+    }
+    
+    # Также добавим параметр загрузки ядра (для более широкой совместимости)
+    if ! grep -q "hid_apple.fnmode=2" /etc/kernel/cmdline.d/keyboard.conf 2>/dev/null; then
+        echo "hid_apple.fnmode=2" | sudo tee /etc/kernel/cmdline.d/keyboard.conf > /dev/null
+        # Обновление загрузчика
+        run_command "sudo bootctl update"
+    fi
+    
+    print_success "Настройка функциональных клавиш завершена"
+    print_warning "Изменения вступят в силу после перезагрузки"
+    
+    # Инструкция для пользователя как временно переключаться
+    echo "Примечание: Для временного переключения между функциональными и мультимедийными клавишами"
+    echo "вы можете использовать комбинацию Fn+Esc (на большинстве клавиатур) или Fn+F1-F12 для"
+    echo "доступа к мультимедийным функциям."
 fi
 
 # Финальная проверка и перезагрузка
