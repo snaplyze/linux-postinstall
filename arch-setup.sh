@@ -2,7 +2,7 @@
 
 # arch-setup.sh - Полный скрипт настройки Arch Linux с GNOME 48
 # Разработан для: Intel Core i7 13700k, RTX 4090, 32 ГБ ОЗУ, 4 NVME Gen4, 2 HDD
-# Версия: 1.4 (Март 2025)
+# Версия: 1.5 (Март 2025)
 
 # Цвета для вывода
 RED="\033[0;31m"
@@ -328,40 +328,45 @@ if contains 2 "${selected_options[@]}"; then
     
     # Проверка необходимых пакетов
     if check_and_install_packages "Драйверы NVIDIA" "nvidia-dkms" "nvidia-utils" "nvidia-settings" "libva-nvidia-driver"; then
-        # Создание конфигурационного файла для NVIDIA
+        # Создание конфигурационных директорий
         run_command "sudo mkdir -p /etc/modprobe.d/"
         
-        # Проверка существования файла
-        if [ -f "/etc/modprobe.d/nvidia.conf" ]; then
-            print_warning "Файл /etc/modprobe.d/nvidia.conf уже существует"
-            cat /etc/modprobe.d/nvidia.conf
-        else
-            run_command "cat << EOF | sudo tee /etc/modprobe.d/nvidia.conf
+        # Настройка модулей NVIDIA для Wayland
+        cat << EOF | sudo tee /etc/modprobe.d/nvidia.conf > /dev/null
 options nvidia-drm modeset=1
 options nvidia NVreg_PreserveVideoMemoryAllocations=1
 options nvidia NVreg_RegistryDwords=RMCleanupInSmoMode=0x1
-EOF"
-        fi
+EOF
+
+        # Настройка управления питанием NVIDIA
+        cat << EOF | sudo tee /etc/modprobe.d/nvidia-power-management.conf > /dev/null
+options nvidia NVreg_DynamicPowerManagement=0x02
+EOF
+
+        # Явная настройка modeset для nvidia-drm
+        cat << EOF | sudo tee /etc/modprobe.d/nvidia-drm.conf > /dev/null
+options nvidia-drm modeset=1
+EOF
 
         # Блокировка nouveau
-        run_command "cat << EOF | sudo tee /etc/modprobe.d/blacklist-nvidia-nouveau.conf
+        cat << EOF | sudo tee /etc/modprobe.d/blacklist-nvidia-nouveau.conf > /dev/null
 blacklist nouveau
 options nouveau modeset=0
-EOF"
+EOF
         
         # Добавление модулей NVIDIA в initramfs в правильном порядке
-        if ! grep -q "nvidia" /etc/mkinitcpio.conf; then
-            # Важно: правильный порядок модулей имеет значение
-            run_command "sudo sed -i 's/^MODULES=(/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm /' /etc/mkinitcpio.conf"
-            
-            # Добавление KMS в hooks для раннего запуска 
-            if ! grep -q "kms" /etc/mkinitcpio.conf; then
-                run_command "sudo sed -i '/^HOOKS=/ s/udev/udev kms/' /etc/mkinitcpio.conf"
-            fi
-            
-            run_command "sudo mkinitcpio -P linux-zen" "critical"
+        run_command "sudo mkdir -p /etc/mkinitcpio.conf.d/"
+        
+        # Создание отдельного конфига для модулей NVIDIA, чтобы не изменять основной файл
+        cat << EOF | sudo tee /etc/mkinitcpio.conf.d/nvidia.conf > /dev/null
+MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)
+EOF
+        
+        # Добавление KMS в hooks для раннего запуска
+        if ! grep -q "kms" /etc/mkinitcpio.conf; then
+            run_command "sudo sed -i '/^HOOKS=/ s/udev/udev kms/' /etc/mkinitcpio.conf"
         else
-            print_success "Модули NVIDIA уже добавлены в mkinitcpio.conf"
+            print_success "KMS уже добавлен в HOOKS mkinitcpio.conf"
         fi
         
         # Настраиваем Pacman hooks для обновления initramfs при обновлении драйверов NVIDIA
@@ -374,6 +379,7 @@ Operation=Remove
 Type=Package
 Target=nvidia-dkms
 Target=linux-zen
+Target=linux-zen-headers
 
 [Action]
 Description=Update NVIDIA module in initcpio
@@ -381,6 +387,10 @@ Depends=mkinitcpio
 When=PostTransaction
 Exec=/usr/bin/mkinitcpio -P
 EOF
+
+        # Перестроение initramfs
+        run_command "sudo mkinitcpio -P linux-zen" "critical"
+        print_success "Конфигурация NVIDIA для Wayland настроена"
     else
         print_warning "Пропускаем настройку NVIDIA из-за отсутствия необходимых пакетов"
     fi
@@ -491,7 +501,7 @@ if contains 4 "${selected_options[@]}"; then
                         echo "Форматирование $disk (метка: $label, точка монтирования: $mount_point)"
                         
                         # Форматирование в ext4
-                        run_command "sudo mkfs.ext4 -L $label /dev/$disk"
+                        run_command "sudo mkfs.ext4 -L $label /dev/${disk}p1"
                         
                         # Создание точки монтирования
                         run_command "sudo mkdir -p $mount_point"
@@ -594,14 +604,12 @@ if contains 5 "${selected_options[@]}"; then
         rootflags=$(echo "$current_cmdline" | grep -o "rootflags=[^ ]*" || echo "")
         rootfstype=$(echo "$current_cmdline" | grep -o "rootfstype=[^ ]*" || echo "")
         
-        # Добавляем параметр nvidia_drm.modeset=1 без проверки файла
-        nvidia_drm_param="nvidia_drm.modeset=1"
-        
-        # Параметры тихой загрузки
+        # Параметры для NVIDIA и тихой загрузки
+        nvidia_params="nvidia_drm.modeset=1 nvidia.NVreg_PreserveVideoMemoryAllocations=1"
         quiet_params="quiet loglevel=3 rd.systemd.show_status=false rd.udev.log_level=3 vt.global_cursor_default=0 splash plymouth.enable=1"
         
         # Комбинируем критические параметры с параметрами тихой загрузки
-        combined_params="$root_param $rootflags $rootfstype $nvidia_drm_param $quiet_params"
+        combined_params="$root_param $rootflags $rootfstype $nvidia_params $quiet_params"
         
         # Создаем файл с параметрами
         cat << EOF | sudo tee /etc/kernel/cmdline.d/quiet.conf > /dev/null
@@ -855,12 +863,13 @@ EOF
 
         # Создание конфигурации для GDM
         run_command "sudo mkdir -p /etc/gdm"
-        if [ ! -f /etc/gdm/custom.conf ]; then
-            cat << EOF | sudo tee /etc/gdm/custom.conf > /dev/null
+        cat << EOF | sudo tee /etc/gdm/custom.conf > /dev/null
 # GDM configuration
 [daemon]
-# Automatically enable Wayland
+# Автоматически включаем Wayland
 WaylandEnable=true
+# Устанавливаем сессию по умолчанию
+DefaultSession=gnome-wayland.desktop
 
 [security]
 
@@ -870,7 +879,6 @@ WaylandEnable=true
 
 [debug]
 EOF
-        fi
         
         # Создание правила udev для NVIDIA и Wayland
         cat << EOF | sudo tee /etc/udev/rules.d/61-nvidia-wayland.rules > /dev/null
@@ -1067,6 +1075,10 @@ if contains 15 "${selected_options[@]}"; then
     # Проверка необходимых пакетов
     audio_packages=("pipewire" "pipewire-alsa" "pipewire-pulse" "pipewire-jack" "wireplumber" "gst-plugin-pipewire")
     if check_and_install_packages "Аудио" "${audio_packages[@]}"; then
+        # Остановка PulseAudio, если запущен
+        systemctl --user stop pulseaudio.socket pulseaudio.service || true
+        systemctl --user disable pulseaudio.socket pulseaudio.service || true
+        
         # Включение сервиса и установка как замены PulseAudio
         run_command "systemctl --user enable pipewire pipewire-pulse wireplumber"
         run_command "systemctl --user start pipewire pipewire-pulse wireplumber"
