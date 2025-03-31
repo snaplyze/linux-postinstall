@@ -1,37 +1,39 @@
 #!/bin/bash
 
-# mini-pc-arch-setup.sh - Скрипт настройки Arch Linux для мини-ПК
-# Разработан для: Intel Celeron N5095, 16 ГБ ОЗУ, SATA3 SSD (btrfs) + SATA3 SSD 2ТБ
-# Версия: 1.0 (Март 2025)
+# mini-pc-arch-setup.sh - Оптимизированный скрипт настройки Arch Linux для мини-ПК
+# Версия: 1.6 (Интерактивная установка Steam, Ext4 для 2го диска, улучшенное форматирование)
+# Цель: Дополнительная настройка системы, установленной с помощью installer.sh
 
-# Цвета для вывода
+# ==============================================================================
+# Цвета и Функции вывода
+# ==============================================================================
 RED="\033[0;31m"
 GREEN="\033[0;32m"
 YELLOW="\033[0;33m"
 BLUE="\033[0;34m"
 NC="\033[0m" # Сброс цвета
 
-# Функция для печати заголовков
 print_header() {
     echo -e "\n${BLUE}===== $1 =====${NC}\n"
 }
 
-# Функция для печати успешных операций
 print_success() {
     echo -e "${GREEN}✓ $1${NC}"
 }
 
-# Функция для печати предупреждений
 print_warning() {
     echo -e "${YELLOW}⚠ $1${NC}"
 }
 
-# Функция для печати ошибок
 print_error() {
     echo -e "${RED}✗ $1${NC}"
 }
 
-# Функция для запроса подтверждения
+# ==============================================================================
+# Вспомогательные Функции
+# ==============================================================================
+
+# Запрос подтверждения у пользователя
 confirm() {
     local prompt="$1 (y/N): "
     local response
@@ -42,21 +44,22 @@ confirm() {
     esac
 }
 
-# Функция для запуска команды с проверкой ошибок
+# Запуск команды с базовой проверкой ошибок
 run_command() {
     echo -e "${YELLOW}Выполняется:${NC} $1"
     if eval "$1"; then
-        print_success "Команда успешно выполнена"
+        print_success "Успешно"
     else
         print_error "Ошибка при выполнении команды"
+        # Если команда помечена как критическая, выходим из скрипта
         if [ "$2" = "critical" ]; then
-            print_error "Критическая ошибка, выход из скрипта"
+            print_error "Критическая ошибка! Выход из скрипта."
             exit 1
         fi
     fi
 }
 
-# Функция для проверки наличия пакета
+# Проверка, установлен ли пакет
 check_package() {
     if pacman -Q "$1" &> /dev/null; then
         return 0  # Пакет установлен
@@ -65,7 +68,7 @@ check_package() {
     fi
 }
 
-# Функция для проверки наличия команды
+# Проверка, доступна ли команда
 check_command() {
     if command -v "$1" &> /dev/null; then
         return 0  # Команда найдена
@@ -74,786 +77,692 @@ check_command() {
     fi
 }
 
-# Функция для проверки и установки пакетов
+# Проверка и установка пакетов (автоматически с --noconfirm)
+# Используется для зависимостей, не для самого Steam
 check_and_install_packages() {
     local category=$1
     shift
     local packages=("$@")
     local missing_packages=()
-    
-    echo -e "${BLUE}Проверка необходимых пакетов для: $category${NC}"
-    
+
+    echo -e "${BLUE}Проверка пакетов для: $category${NC}"
+
+    # Собираем список отсутствующих пакетов
     for pkg in "${packages[@]}"; do
         if ! check_package "$pkg"; then
-            missing_packages+=("$pkg")
+            # Проверяем наличие в репозиториях перед добавлением
+            if pacman -Si "$pkg" &> /dev/null; then
+                missing_packages+=("$pkg")
+            else
+                print_warning "Пакет '$pkg' не найден в репозиториях. Пропускаем."
+            fi
         fi
     done
-    
+
+    # Если есть отсутствующие пакеты, предлагаем установить
     if [ ${#missing_packages[@]} -gt 0 ]; then
-        echo -e "${YELLOW}Отсутствуют следующие пакеты:${NC} ${missing_packages[*]}"
-        if confirm "Установить отсутствующие пакеты?"; then
-            run_command "sudo pacman -S --needed --noconfirm ${missing_packages[*]}"
-            return 0
+        echo -e "${YELLOW}Отсутствуют: ${missing_packages[*]}${NC}"
+        if confirm "Установить эти пакеты?"; then
+            run_command "sudo pacman -S --needed --noconfirm ${missing_packages[*]}" "critical"
+
+            # Дополнительная проверка после установки
+            local failed_install=()
+            for pkg in "${missing_packages[@]}"; do
+                if ! check_package "$pkg"; then
+                    failed_install+=("$pkg")
+                fi
+            done
+            if [ ${#failed_install[@]} -gt 0 ]; then
+                print_error "Не удалось установить: ${failed_install[*]}. Операция может быть неполной."
+                return 1 # Ошибка установки
+            else
+                print_success "Пакеты успешно установлены."
+                return 0 # Успех
+            fi
         else
-            echo -e "${YELLOW}Пропускаем установку пакетов. Операция может быть неполной.${NC}"
-            return 1
+            print_warning "Пропуск установки пакетов."
+            return 1 # Пользователь отказался
         fi
     else
-        echo -e "${GREEN}Все необходимые пакеты установлены${NC}"
-        return 0
+        echo -e "${GREEN}Все необходимые пакеты уже установлены${NC}"
+        return 0 # Успех, все уже есть
     fi
 }
 
-# Проверка системных требований и предварительных условий
+# ==============================================================================
+# Предварительные Проверки Системы
+# ==============================================================================
 print_header "Проверка системных требований"
 
-# Проверка, запущен ли скрипт от имени обычного пользователя (не root)
+# Проверка запуска от обычного пользователя
 if [ "$EUID" -eq 0 ]; then
-    print_error "Этот скрипт должен быть запущен от имени обычного пользователя, а не root"
+    print_error "Этот скрипт должен быть запущен от имени обычного пользователя, не root!"
     exit 1
 fi
 
-# Проверка базовых зависимостей
-base_deps=("bash" "sed" "grep" "awk" "sudo")
+# Проверка базовых команд
+base_deps=("bash" "sed" "grep" "awk")
 missing_deps=()
-
 for cmd in "${base_deps[@]}"; do
     if ! check_command "$cmd"; then
         missing_deps+=("$cmd")
     fi
 done
-
 if [ ${#missing_deps[@]} -gt 0 ]; then
     print_error "Отсутствуют необходимые базовые команды: ${missing_deps[*]}"
-    print_error "Установите их перед запуском скрипта"
     exit 1
 fi
 
-# Проверка наличия zram
-if lsmod | grep -q zram || [ -e "/dev/zram0" ]; then
-    print_success "ZRAM уже настроен в системе"
-    ZRAM_CONFIGURED=true
+# Проверка ZRAM (устанавливается инсталлятором)
+if [ -e "/dev/zram0" ] && systemctl is-enabled --quiet systemd-zram-setup@zram0.service; then
+    print_success "ZRAM настроен и включен установщиком"
 else
-    print_warning "ZRAM не обнаружен. Рекомендуется для улучшения производительности"
-    ZRAM_CONFIGURED=false
+    print_warning "ZRAM не обнаружен или не включен. Проверьте логи установщика."
 fi
 
-# Вывод информации о системе
+# ==============================================================================
+# Информация о Системе
+# ==============================================================================
 print_header "Информация о системе"
 echo "Ядро Linux: $(uname -r)"
 echo "Дистрибутив: $(cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)"
 echo "Процессор: $(lscpu | grep "Model name" | sed 's/Model name: *//')"
 echo "Память: $(free -h | awk '/^Mem:/ {print $2}')"
-
-# Определение корневого раздела
 ROOT_DEVICE=$(findmnt -no SOURCE / | sed 's/\[.*\]//')
-echo "Системный диск: $ROOT_DEVICE"
-
-echo "Смонтированные диски:"
-findmnt -t btrfs,ext4,vfat -no SOURCE,TARGET,FSTYPE,OPTIONS | grep -v "zram"
-
-echo "BTRFS подтома:"
-sudo btrfs subvolume list / || echo "Не удалось получить список подтомов"
-
-echo "Все доступные блочные устройства:"
+echo "Системный диск: $ROOT_DEVICE (ФС: BTRFS - установлено installer.sh)"
+echo "Опции монтирования '/': $(grep "[[:space:]]/[[:space:]]" /etc/fstab | awk '{print $4}')"
+echo "BTRFS подтома на '/':"
+sudo btrfs subvolume list / || echo " (Не удалось получить список подтомов)"
+echo -e "\nВсе доступные блочные устройства:"
 lsblk -o NAME,SIZE,TYPE,MOUNTPOINTS,FSTYPE
 
-# Проверка, установлена ли система с использованием systemd-boot
-if [ ! -d "/boot/loader" ]; then
-    print_warning "Не найдена директория /boot/loader. Возможно, systemd-boot не используется."
-    if ! confirm "Продолжить выполнение скрипта?"; then
-        exit 1
-    fi
+# Проверка загрузчика (systemd-boot устанавливается инсталлятором)
+if [ -d "/boot/loader" ] && [ -f "/boot/loader/loader.conf" ]; then
+    print_success "Обнаружена конфигурация systemd-boot"
+else
+    print_error "Не найдена конфигурация systemd-boot. Скрипт может работать некорректно."
+    if ! confirm "Продолжить выполнение скрипта?"; then exit 1; fi
 fi
 
-# Проверка, используется ли основное ядро linux или linux-zen
-if [ ! -f "/boot/vmlinuz-linux" ] && [ ! -f "/boot/vmlinuz-linux-zen" ]; then
-    print_warning "Не найдено стандартное ядро linux или linux-zen. Скрипт настроен для стандартного ядра."
-    if ! confirm "Продолжить выполнение скрипта?"; then
-        exit 1
-    fi
-fi
-
-# Определение используемого ядра для последующих операций
+# Определение ядра (linux-zen устанавливается инсталлятором)
 if [ -f "/boot/vmlinuz-linux-zen" ]; then
     KERNEL_NAME="linux-zen"
+    print_success "Обнаружено ядро: $KERNEL_NAME"
 else
-    KERNEL_NAME="linux"
+    print_warning "Ядро linux-zen не найдено. Скрипт настроен для linux-zen."
+    KERNEL_NAME="linux" # Fallback
+    if ! confirm "Продолжить с ядром '$KERNEL_NAME'?"; then exit 1; fi
 fi
-echo "Используемое ядро: $KERNEL_NAME"
 
-# Меню для выбора операций
+# ==============================================================================
+# Основное Меню
+# ==============================================================================
 while true; do
     print_header "Выберите операцию для выполнения"
-    echo "1. Обновление системы и базовая настройка"
-    echo "2. Настройка Intel графики для Wayland"
-    echo "3. Оптимизация SSD и настройка BTRFS"
-    echo "4. Форматирование и монтирование второго SSD (2ТБ)"
-    echo "5. Настройка ZRAM"
-    echo "6. Скрытие логов при загрузке"
-    echo "7. Установка Paru в скрытую папку"
-    echo "8. Настройка Flathub и GNOME Software"
-    echo "9. Настройка управления питанием"
-    echo "10. Настройка локализации и безопасности"
-    echo "11. Установка дополнительных программ"
-    echo "12. Установка Timeshift для резервного копирования"
-    echo "13. Настройка современного аудио-стека (PipeWire)"
-    echo "14. Оптимизация памяти и производительности"
-    echo "15. Настройка функциональных клавиш (F1-F12)"
-    echo "0. Выход"
-    
+    echo " 1. Обновление системы"
+    echo " 2. Доп. настройка Intel графики (Wayland)"
+    echo " 3. Доп. оптимизация BTRFS (системный диск)"
+    echo " 4. Форматирование и монтирование второго SSD в Ext4 (/mnt/ssd)"
+    echo " 5. Уточнение настройки скрытия логов при загрузке"
+    echo " 6. Настройка пользовательского Paru"
+    echo " 7. Настройка Flathub и GNOME Software"
+    echo " 8. Настройка управления питанием (TLP)"
+    echo " 9. Настройка Firewall и Core Dumps"
+    echo "10. Установка доп. утилит и Seahorse"
+    echo "11. Установка Timeshift (системный диск)"
+    echo "12. Тонкая настройка PipeWire (Low Latency)"
+    echo "13. Доп. оптимизация производительности"
+    echo "14. Настройка Fn-клавиш (Apple Keyboard)"
+    echo "15. Установка Steam (Intel графика)"
+    echo " 0. Выход"
+
     read -p "Введите номер операции: " choice
-    
+
     case $choice in
-        0)
+        0) # Выход
             echo "Выход из скрипта."
             exit 0
             ;;
-        1)
-            # 1. Обновление системы и базовая настройка
-            print_header "1. Обновление системы и базовая настройка"
-            
-            # Проверка необходимых пакетов
-            if check_and_install_packages "Базовые утилиты" "base-devel" "git" "curl" "wget" "bash-completion"; then
-                # Обновление системы
-                run_command "sudo pacman -Syu --noconfirm"
-                
-                # Установка intel-ucode (микрокод процессора Intel)
-                if ! pacman -Qi intel-ucode &> /dev/null; then
-                    run_command "sudo pacman -S --noconfirm intel-ucode"
-                else
-                    print_success "intel-ucode уже установлен"
-                fi
-            else
-                print_warning "Пропускаем базовую настройку из-за отсутствия необходимых пакетов"
-            fi
+
+        1) # Обновление системы
+            print_header "1. Обновление системы"
+            run_command "sudo pacman -Syu --noconfirm" "critical"
+            print_success "Система обновлена"
             ;;
-        2)
-            # 2. Настройка Intel графики для Wayland
-            print_header "2. Настройка Intel графики для Wayland"
-            
-            # Проверка необходимых пакетов
-            if check_and_install_packages "Intel графика" "mesa" "intel-media-driver" "vulkan-intel" "libva-intel-driver"; then
-                # Оптимизация для Intel графики
-                cat << EOF | sudo tee /etc/modprobe.d/i915.conf > /dev/null
-# Оптимизация для Intel графики
-options i915 enable_fbc=1 enable_guc=2 enable_dc=4
-EOF
-                
-                # Добавление модуля i915 в initramfs
-                run_command "sudo mkdir -p /etc/mkinitcpio.conf.d/"
-                echo "MODULES=(i915)" | sudo tee /etc/mkinitcpio.conf.d/i915.conf > /dev/null
-                print_success "Настройка модулей i915 для Intel графики завершена"
-                
-                # Перестроение initramfs
-                run_command "sudo mkinitcpio -P"
-                
-                # Настройка для Wayland
-                if check_and_install_packages "Wayland" "qt6-wayland" "qt5-wayland" "xorg-xwayland"; then
-                    # Добавляем минимальные переменные окружения для Wayland
-                    cat << EOF | sudo tee /etc/environment > /dev/null
-# Настройки Wayland для Intel графики
+
+        2) # Доп. настройка Intel графики
+            print_header "2. Дополнительная настройка Intel графики (Wayland)"
+            if check_and_install_packages "Intel графика (доп.)" "intel-media-driver" "qt6-wayland" "qt5-wayland"; then
+                # Оптимизация модуля i915
+                I915_CONF="/etc/modprobe.d/i915.conf"
+                I915_OPTS="options i915 enable_fbc=1 enable_guc=2 enable_dc=4"
+                echo "Проверка $I915_CONF..."
+                if [ ! -f "$I915_CONF" ] || ! grep -qF "$I915_OPTS" "$I915_CONF"; then
+                    echo "Обновление $I915_CONF..."
+                    echo "# Opts (mini-pc.sh)" | sudo tee "$I915_CONF" > /dev/null
+                    echo "$I915_OPTS" | sudo tee -a "$I915_CONF" > /dev/null
+                    print_success "Настройка $I915_CONF применена."
+                    print_warning "Требуется перестроение initramfs (sudo mkinitcpio -P) и перезагрузка."
+                else
+                    print_success "$I915_CONF уже настроен."
+                fi
+                # Системные переменные окружения для Wayland
+                ENV_FILE="/etc/environment"
+                echo "Проверка $ENV_FILE..."
+                ENV_CONTENT=$(cat <<EOF
+# Wayland (mini-pc.sh)
 LIBVA_DRIVER_NAME=iHD
 MOZ_ENABLE_WAYLAND=1
 QT_QPA_PLATFORM=wayland
 EOF
-                    print_success "Переменные окружения для Wayland настроены"
-                    
-                    # Настройка GDM для Wayland
-                    run_command "sudo mkdir -p /etc/gdm"
-                    cat << EOF | sudo tee /etc/gdm/custom.conf > /dev/null
-[daemon]
-WaylandEnable=true
-
-[security]
-
-[xdmcp]
-
-[chooser]
-
-[debug]
-EOF
-                    print_success "GDM настроен для использования Wayland"
+)
+                if [ ! -f "$ENV_FILE" ] || ! grep -q "LIBVA_DRIVER_NAME=iHD" "$ENV_FILE"; then
+                    echo "Обновление $ENV_FILE..."
+                    echo "$ENV_CONTENT" | sudo tee "$ENV_FILE" > /dev/null
+                    print_success "$ENV_FILE настроен для Wayland."
+                else
+                    print_success "$ENV_FILE уже содержит настройки Wayland."
                 fi
-                
-                print_success "Настройка Intel графики для Wayland завершена"
+                print_success "Дополнительная настройка Intel графики завершена."
             else
-                print_warning "Пропускаем настройку Intel графики из-за отсутствия необходимых пакетов"
+                print_warning "Пропуск доп. настройки Intel графики (не установлены пакеты)."
             fi
             ;;
-        3)
-            # 3. Оптимизация SSD и настройка BTRFS
-            print_header "3. Оптимизация SSD и настройка BTRFS"
-            
-            # Проверка наличия необходимых утилит
-            if check_and_install_packages "Утилиты SSD и BTRFS" "btrfs-progs" "hdparm" "smartmontools"; then
-                # Включение TRIM для SSD
-                run_command "sudo systemctl enable fstrim.timer"
-                run_command "sudo systemctl start fstrim.timer"
-                
-                # Настройка монтирования для BTRFS
-                echo "Текущие опции монтирования root:"
-                findmnt -no OPTIONS / | tr , '\n'
-                
-                if confirm "Оптимизировать опции монтирования BTRFS для SSD?"; then
-                    # Получаем UUID корневого раздела
-                    ROOT_UUID=$(sudo blkid -s UUID -o value $ROOT_DEVICE)
-                    
-                    # Определяем текущий корневой subvolume
-                    ROOT_SUBVOL=$(findmnt -no OPTIONS / | tr , '\n' | grep subvol= | cut -d= -f2)
-                    
-                    # Резервная копия fstab
-                    run_command "sudo cp /etc/fstab /etc/fstab.backup"
-                    
-                    # Обновляем опции монтирования с оптимизацией для SSD
-                    run_command "sudo sed -i '/ \/ /s/defaults/defaults,noatime,compress=zstd:1,space_cache=v2,discard=async/' /etc/fstab"
-                    
-                    echo "Обновленные опции монтирования в /etc/fstab:"
-                    grep " / " /etc/fstab
-                    
-                    print_success "Опции монтирования BTRFS оптимизированы для SSD"
-                fi
-                
-                # Настройка кэша метаданных BTRFS
-                cat << EOF | sudo tee /etc/sysctl.d/60-btrfs-performance.conf > /dev/null
-# Увеличение лимита кэша метаданных для BTRFS
+
+        3) # Доп. оптимизация BTRFS
+            print_header "3. Дополнительная оптимизация BTRFS (системный диск)"
+            print_success "TRIM и опции монтирования системного диска настроены установщиком."
+            echo "Текущие опции монтирования '/': $(grep "[[:space:]]/[[:space:]]" /etc/fstab | awk '{print $4}')"
+            # Настройка кэша метаданных
+            SYSCTL_CONF="/etc/sysctl.d/60-btrfs-performance.conf"
+            echo "Проверка sysctl для BTRFS ($SYSCTL_CONF)..."
+            if [ ! -f "$SYSCTL_CONF" ]; then
+                echo "Создание $SYSCTL_CONF..."
+                cat << EOF | sudo tee "$SYSCTL_CONF" > /dev/null
+# BTRFS Cache (mini-pc.sh)
 vm.dirty_bytes = 4294967296
 vm.dirty_background_bytes = 1073741824
 EOF
-                
                 run_command "sudo sysctl --system"
-                
-                print_success "Оптимизация SSD и BTRFS завершена"
+                print_success "Настройки sysctl для BTRFS применены."
             else
-                print_warning "Пропускаем оптимизацию SSD и BTRFS из-за отсутствия необходимых пакетов"
+                print_success "Настройки sysctl для BTRFS уже существуют."
             fi
+            print_success "Дополнительная оптимизация BTRFS для системного диска завершена."
             ;;
-        4)
-            # 4. Форматирование и монтирование второго SSD (2ТБ)
-            print_header "4. Форматирование и монтирование второго SSD (2ТБ)"
-            
-            # Проверка наличия необходимых пакетов
-            if check_and_install_packages "Форматирование дисков" "parted" "e2fsprogs" "gvfs" "btrfs-progs"; then
-                # Предупреждение
-                print_warning "ВНИМАНИЕ! Эта операция необратимо уничтожит все данные на выбранном диске!"
-                echo "Состояние дисков в системе:"
+
+        4) # Форматирование второго SSD в Ext4
+            print_header "4. Форматирование и монтирование второго SSD в Ext4 (/mnt/ssd)"
+            if check_and_install_packages "Форматирование дисков (Ext4)" "parted" "e2fsprogs" "gvfs"; then
+                print_warning "ВНИМАНИЕ! Все данные на выбранном диске будут УНИЧТОЖЕНЫ!"
+                echo "Текущие диски и разделы:"
                 lsblk -o NAME,SIZE,TYPE,MOUNTPOINTS,FSTYPE
-                
-                # Получение корневого диска для исключения из списка
                 ROOT_DISK=$(echo $ROOT_DEVICE | grep -o '^/dev/[a-z0-9]*')
-                
-                # Получение списка доступных дисков, исключая корневой
-                available_disks=$(lsblk -lno NAME,SIZE,TYPE | grep "disk" | grep -v "$(basename $ROOT_DISK)" | awk '{print "/dev/"$1" ("$2")"}')
-                
-                if [ -z "$available_disks" ]; then
-                    print_warning "Дополнительные диски не найдены"
-                    continue
-                fi
-                
-                echo "Найдены следующие диски для форматирования:"
-                echo "$available_disks"
-                
-                read -p "Введите путь к диску для форматирования (например, /dev/sdb): " second_disk
-                
-                if [ ! -b "$second_disk" ]; then
-                    print_error "Устройство $second_disk не найдено или не является блочным устройством"
-                    continue
-                fi
-                
-                if [ "$second_disk" = "$ROOT_DISK" ]; then
-                    print_error "Нельзя форматировать системный диск!"
-                    continue
-                fi
-                
-                if confirm "Форматировать $second_disk в BTRFS?"; then
-                    # Проверяем, смонтирован ли диск
-                    if grep -q "$second_disk" /proc/mounts; then
-                        print_warning "Диск $second_disk смонтирован. Размонтируем его."
-                        run_command "sudo umount ${second_disk}*"
+
+                # Получаем список дисков для выбора
+                mapfile -t available_disks < <(lsblk -dpno NAME,SIZE,TYPE | grep "disk" | grep -v "$ROOT_DISK" | awk '{print $1" ("$2")"}')
+                if [ ${#available_disks[@]} -eq 0 ]; then print_warning "Дополнительные диски не найдены."; continue; fi
+
+                echo "Доступные диски для форматирования:"
+                select disk_choice in "${available_disks[@]}" "Отмена"; do
+                    if [ "$disk_choice" == "Отмена" ]; then
+                         print_warning "Операция отменена."
+                         break # Выход из select, возврат в главное меню
+                    elif [ -n "$disk_choice" ]; then
+                         second_disk=$(echo "$disk_choice" | awk '{print $1}')
+                         break # Диск выбран
+                    else
+                         print_warning "Неверный выбор."
                     fi
-                    
-                    # Создание GPT таблицы разделов
-                    run_command "sudo parted $second_disk mklabel gpt"
-                    
-                    # Создание одного большого раздела
-                    run_command "sudo parted -a optimal $second_disk mkpart primary btrfs 0% 100%"
-                    
-                    # Определяем созданный раздел
-                    sleep 1
-                    new_partition="${second_disk}1"
-                    if [[ "$second_disk" == *"nvme"* ]]; then
-                        new_partition="${second_disk}p1"
+                done
+                # Если была выбрана отмена, пропускаем остаток шага
+                if [ "$disk_choice" == "Отмена" ]; then continue; fi
+
+                if confirm "Точно форматировать $second_disk в Ext4 (метка 'SSD', точка /mnt/ssd)?"; then
+                    # Размонтирование, если нужно
+                    if mount | grep -q "^$second_disk"; then
+                        print_warning "Размонтирование $second_disk..."
+                        run_command "sudo umount ${second_disk}*" || { print_error "Не удалось размонтировать. Пропускаем."; continue; }
                     fi
-                    
-                    # Форматирование в BTRFS
-                    run_command "sudo mkfs.btrfs -L DATA $new_partition"
-                    
-                    # Создание точки монтирования
-                    mount_point="/mnt/data"
+                    # Очистка, разметка
+                    run_command "sudo wipefs -af $second_disk" "critical"
+                    run_command "sudo sgdisk --zap-all $second_disk" "critical"
+                    run_command "sudo parted -s $second_disk mklabel gpt" "critical"
+                    run_command "sudo parted -s -a optimal $second_disk mkpart primary ext4 0% 100%" "critical"
+                    sleep 2 # Даем время
+                    # Определение раздела
+                    new_partition_name=$(lsblk -lno NAME $second_disk | grep -E "${second_disk##*/}[p]?1$") # Ищем sda1 или nvme0n1p1
+                    if [ -z "$new_partition_name" ]; then print_error "Не удалось определить раздел на $second_disk."; continue; fi
+                    new_partition="/dev/$new_partition_name"
+                    if [ ! -b "$new_partition" ]; then print_error "'$new_partition' не блочное устройство."; continue; fi
+                    print_success "Создан раздел: $new_partition"
+                    # Форматирование
+                    print_info "Форматирование $new_partition в Ext4 (метка 'SSD')..."
+                    run_command "sudo mkfs.ext4 -L SSD $new_partition" "critical"
+                    # Точка монтирования
+                    mount_point="/mnt/ssd"
                     run_command "sudo mkdir -p $mount_point"
-                    
-                    # Временное монтирование
-                    run_command "sudo mount $new_partition $mount_point"
-                    
-                    # Создание подтомов
-                    run_command "sudo btrfs subvolume create $mount_point/@data"
-                    run_command "sudo btrfs subvolume create $mount_point/@downloads"
-                    run_command "sudo btrfs subvolume create $mount_point/@media"
-                    
-                    # Размонтирование
-                    run_command "sudo umount $mount_point"
-                    
-                    # Добавление записей в fstab для подтомов
+                    # fstab
                     DATA_UUID=$(sudo blkid -s UUID -o value $new_partition)
-                    
-                    # Добавление записей в fstab, если их еще нет
-                    if ! grep -q "UUID=$DATA_UUID" /etc/fstab; then
-                        echo "# Второй SSD - DATA" | sudo tee -a /etc/fstab
-                        echo "UUID=$DATA_UUID  $mount_point  btrfs  defaults,noatime,compress=zstd:1,space_cache=v2,discard=async,subvol=@data  0 0" | sudo tee -a /etc/fstab
-                        echo "UUID=$DATA_UUID  /home/\$(whoami)/Downloads  btrfs  defaults,noatime,compress=zstd:1,space_cache=v2,discard=async,subvol=@downloads  0 0" | sudo tee -a /etc/fstab
-                        echo "UUID=$DATA_UUID  /home/\$(whoami)/Media  btrfs  defaults,noatime,compress=zstd:1,space_cache=v2,discard=async,subvol=@media  0 0" | sudo tee -a /etc/fstab
-                    fi
-                    
-                    # Создание директорий для монтирования подтомов
-                    run_command "mkdir -p ~/Downloads ~/Media"
-                    
-                    # Монтирование всех точек
-                    run_command "sudo mount -a"
-                    
-                    print_success "Диск $second_disk успешно отформатирован с подтомами BTRFS и примонтирован"
-                fi
-            else
-                print_warning "Пропускаем форматирование диска из-за отсутствия необходимых пакетов"
-            fi
-            ;;
-        5)
-            # 5. Настройка ZRAM
-            print_header "5. Настройка ZRAM"
-            
-            # Обнаружение ZRAM
-            if lsmod | grep -q zram || [ -e "/dev/zram0" ]; then
-                print_success "ZRAM уже настроен в системе. Проверка конфигурации..."
-                if [ -f "/etc/systemd/zram-generator.conf" ]; then
-                    echo "Содержимое /etc/systemd/zram-generator.conf:"
-                    cat /etc/systemd/zram-generator.conf
-                fi
-            else
-                # Проверка наличия необходимых пакетов
-                if check_and_install_packages "ZRAM" "zram-generator"; then
-                    # Создание конфигурации ZRAM
-                    cat << EOF | sudo tee /etc/systemd/zram-generator.conf > /dev/null
-[zram0]
-zram-size = min(ram / 2, 4096)
-compression-algorithm = zstd
-EOF
-                    
-                    # Перезапуск службы
+                    if [ -z "$DATA_UUID" ]; then print_error "Не удалось получить UUID для $new_partition."; continue; fi
+                    print_info "Добавление записи в /etc/fstab для $mount_point..."
+                    run_command "sudo cp /etc/fstab /etc/fstab.backup.$(date +%F_%T)"
+                    sudo sed -i "/UUID=$DATA_UUID/d" /etc/fstab # Удаляем старые записи с этим UUID
+                    fstab_line="UUID=$DATA_UUID  $mount_point  ext4  defaults,noatime,x-gvfs-show  0 2"
+                    echo "# Второй SSD - (Ext4, SSD, /mnt/ssd, mini-pc.sh)" | sudo tee -a /etc/fstab > /dev/null
+                    echo "$fstab_line" | sudo tee -a /etc/fstab > /dev/null
+                    print_success "Строка добавлена в fstab: $fstab_line"
+                    # Монтирование и права
                     run_command "sudo systemctl daemon-reload"
-                    run_command "sudo systemctl restart systemd-zram-setup@zram0.service"
-                    
-                    print_success "ZRAM настроен. Будет активирован после перезагрузки."
-                else
-                    print_warning "Пропускаем настройку ZRAM из-за отсутствия необходимых пакетов"
-                fi
-            fi
+                    run_command "sudo mount -a" "critical"
+                    print_info "Установка прав доступа для $mount_point..."
+                    run_command "sudo chown $(whoami):$(whoami) $mount_point"
+                    print_success "Диск $second_disk отформатирован и примонтирован в $mount_point."
+                    print_info "Диск должен появиться в Nautilus (может потребоваться перезапуск)."
+                fi # Конец confirm
+            else
+                print_warning "Пропуск форматирования (нет необходимых пакетов)."
+            fi # Конец check_and_install_packages
             ;;
-        6)
-            # 6. Скрытие логов при загрузке
-            print_header "6. Скрытие логов при загрузке"
-            
-            # Проверка наличия необходимых пакетов
-            if check_and_install_packages "Plymouth" "plymouth"; then
-                # Создаем или обновляем параметры ядра
-                run_command "sudo mkdir -p /etc/kernel/cmdline.d/"
-                
-                # Извлекаем текущие параметры загрузки
-                current_cmdline=$(cat /proc/cmdline)
-                echo "Текущие параметры загрузки: $current_cmdline"
-                
-                # Извлекаем критические параметры для BTRFS
-                root_param=$(echo "$current_cmdline" | grep -o "root=[^ ]*" || echo "")
-                rootflags=$(echo "$current_cmdline" | grep -o "rootflags=[^ ]*" || echo "")
-                rootfstype=$(echo "$current_cmdline" | grep -o "rootfstype=[^ ]*" || echo "")
-                
-                # Параметры тихой загрузки
-                quiet_params="quiet loglevel=3 rd.systemd.show_status=false rd.udev.log_level=3 vt.global_cursor_default=0 splash plymouth.enable=1"
-                
-                # Комбинируем критические параметры с параметрами тихой загрузки
-                combined_params="$root_param $rootflags $rootfstype $quiet_params"
-                
-                # Создаем файл с параметрами
-                echo "$combined_params" | sudo tee /etc/kernel/cmdline.d/quiet.conf > /dev/null
-                print_success "Параметры загрузки установлены: $combined_params"
-                
-                # Отключение журналирования на tty
-                run_command "sudo mkdir -p /etc/systemd/journald.conf.d/"
-                cat << EOF | sudo tee /etc/systemd/journald.conf.d/quiet.conf > /dev/null
+
+        5) # Скрытие логов
+            print_header "5. Уточнение настройки скрытия логов при загрузке"
+            print_success "Plymouth и базовые параметры 'quiet splash' настроены установщиком."
+            # Доп. параметры ядра
+            QUIET_PARAMS="loglevel=3 rd.systemd.show_status=auto rd.udev.log_priority=3"
+            CMDLINE_FILE="/etc/kernel/cmdline.d/quiet-extra.conf"
+            echo "Проверка $CMDLINE_FILE..."
+            if [ ! -f "$CMDLINE_FILE" ] || ! grep -q "loglevel=3" "$CMDLINE_FILE"; then
+                echo "Добавление доп. параметров тихой загрузки..."
+                echo "$QUIET_PARAMS" | sudo tee "$CMDLINE_FILE" > /dev/null
+                print_success "Дополнительные параметры добавлены."
+                run_command "sudo bootctl update"
+            else
+                print_success "Дополнительные параметры тихой загрузки уже установлены."
+            fi
+            # Отключение журнала на TTY
+            JOURNALD_CONF="/etc/systemd/journald.conf.d/quiet.conf"
+            echo "Проверка $JOURNALD_CONF..."
+            if [ ! -f "$JOURNALD_CONF" ]; then
+                if confirm "Отключить вывод журнала systemd на TTY?"; then
+                    run_command "sudo mkdir -p /etc/systemd/journald.conf.d/"
+                    cat << EOF | sudo tee "$JOURNALD_CONF" > /dev/null
 [Journal]
 TTYPath=/dev/null
 EOF
-                
-                # Добавление plymouth в HOOKS
-                if ! grep -q "plymouth" /etc/mkinitcpio.conf; then
-                    run_command "sudo sed -i 's/^HOOKS=.*/HOOKS=(base udev plymouth autodetect modconf keyboard keymap consolefont block filesystems fsck)/' /etc/mkinitcpio.conf"
-                else
-                    print_success "Plymouth уже добавлен в HOOKS mkinitcpio.conf"
+                    print_success "Вывод журнала на TTY отключен."
                 fi
-                
-                # Перестроение initramfs
-                run_command "sudo mkinitcpio -P"
-                
-                # Настройка systemd-boot
-                run_command "sudo mkdir -p /boot/loader/"
-                
-                # Создание конфигурации systemd-boot
-                cat << EOF | sudo tee /boot/loader/loader.conf > /dev/null
-default arch.conf
-timeout 0
-console-mode max
-editor no
-EOF
-                
-                # Создание загрузочной записи
-                run_command "sudo mkdir -p /boot/loader/entries/"
-                cat << EOF | sudo tee /boot/loader/entries/arch.conf > /dev/null
-title Arch Linux
-linux /vmlinuz-$KERNEL_NAME
-initrd /intel-ucode.img
-initrd /initramfs-$KERNEL_NAME.img
-options $(cat /etc/kernel/cmdline.d/quiet.conf)
-EOF
-                
-                # Обновление загрузчика
-                run_command "sudo bootctl update"
-                
-                print_success "Настройка тихой загрузки завершена"
             else
-                print_warning "Пропускаем настройку тихой загрузки из-за отсутствия необходимых пакетов"
+                print_success "Настройка журнала TTY уже существует ($JOURNALD_CONF)."
             fi
+            print_success "Настройка тихой загрузки завершена."
             ;;
-        7)
-            # 7. Установка Paru в скрытую папку
-            print_header "7. Установка Paru в скрытую папку"
-            
-            # Проверка необходимых пакетов
-            if check_and_install_packages "Сборка пакетов" "base-devel" "git"; then
-                # Проверка, установлен ли paru
-                if check_command "paru"; then
-                    print_success "Paru уже установлен. Пропускаем установку."
-                else
-                    # Создание скрытой папки для Paru
-                    run_command "mkdir -p ~/.local/paru"
-                    
-                    # Клонирование репозитория Paru
-                    run_command "git clone https://aur.archlinux.org/paru.git ~/.local/paru/build"
-                    run_command "cd ~/.local/paru/build && makepkg -si --noconfirm"
-                fi
-                
-                # Настройка Paru
+
+        6) # Настройка Paru
+            print_header "6. Настройка пользовательского Paru"
+            if ! check_command "paru"; then print_error "Paru не найден."; continue; fi
+            print_success "Paru установлен системно (/usr/bin/paru)."
+            # Пользовательский конфиг
+            PARU_USER_CONF="$HOME/.config/paru/paru.conf"
+            echo "Проверка $PARU_USER_CONF..."
+            if [ ! -f "$PARU_USER_CONF" ]; then
+                echo "Создание $PARU_USER_CONF..."
                 run_command "mkdir -p ~/.config/paru"
-                
-                # Создание конфигурации paru
-                cat << EOF > ~/.config/paru/paru.conf
+                cat << EOF > "$PARU_USER_CONF"
+# Пользовательский конфиг Paru
 [options]
 BottomUp
-SudoLoop
-Devel
-CleanAfter
-BatchInstall
-NewVersion
-UpgradeMenu
-CombinedUpgrade
-RemoveMake
-KeepRepoCache
-Redownload 
-NewsOnUpgrade
+Devel               # Показывать пакеты в разработке при поиске обновлений
+CleanAfter          # Очищать кэш сборки после установки
+NewsOnUpgrade       # Показывать новости Arch перед обновлением
+# UpgradeMenu       # Показывать меню выбора пакетов для обновления (можно раскомментировать)
+CombinedUpgrade     # Показывать пакеты из репо и AUR вместе
+# RemoveMake        # Удалять зависимости сборки после установки (экономит место, но может мешать пересборке)
+# KeepRepoCache     # Не удалять кэш скачанных пакетов из репозиториев
+# SudoLoop          # Периодически обновлять sudo timestamp (системный конфиг уже может это делать)
+# BatchInstall      # Устанавливать пакеты без подтверждения каждого (рискованно)
+# Redownload        # Всегда скачивать исходники AUR заново
 
-# Папка для скачивания
-CloneDir = ~/.local/paru/packages
+# Папка для временных файлов сборки (если нужно изменить)
+# CloneDir = ~/.cache/paru/clone
 EOF
-                
-                print_success "Установка и настройка Paru завершена"
+                print_success "Создан пользовательский конфиг: $PARU_USER_CONF"
+                print_warning "Отредактируйте его при необходимости (настройки SudoLoop/RemoveMake/BatchInstall)."
             else
-                print_warning "Пропускаем установку Paru из-за отсутствия необходимых пакетов"
+                print_success "Пользовательский конфиг Paru уже существует: $PARU_USER_CONF"
             fi
             ;;
-        8)
-            # 8. Настройка Flathub и GNOME Software
-            print_header "8. Настройка Flathub и GNOME Software"
-            
-            # Проверка необходимых пакетов
-            if check_and_install_packages "Flatpak" "flatpak" "gnome-software"; then
-                # Добавление репозитория Flathub
-                run_command "flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo"
-                
-                # Определение последней доступной версии GNOME Platform
+
+        7) # Настройка Flathub
+            print_header "7. Настройка Flathub и GNOME Software"
+            if ! check_command "flatpak" || ! check_package "gnome-software"; then print_error "Нет Flatpak или GNOME Software."; continue; fi
+            print_success "Flatpak и GNOME Software установлены."
+            # Репозиторий Flathub
+            if ! flatpak remote-list | grep -q flathub; then
+                print_info "Добавление репозитория Flathub..."
+                run_command "flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo" "critical"
+            else
+                print_success "Репозиторий Flathub уже добавлен."
+            fi
+            # GNOME Platform
+            echo "Проверка наличия GNOME Platform Runtime..."
+            GNOME_PLATFORM_ID="org.gnome.Platform"
+            if ! flatpak list --runtime | grep -q "$GNOME_PLATFORM_ID"; then
                 echo "Определение последней версии GNOME Platform..."
-                # Пробуем получить последнюю версию из доступных в репозитории
-                latest_gnome_version=$(flatpak remote-info --log flathub org.gnome.Platform 2>/dev/null | grep -oP "Version: \K[0-9]+" | head -1)
-                
-                # Устанавливаем версию по умолчанию, если не удалось получить
+                # Получаем все версии, сортируем по номеру, берем последнюю
+                latest_gnome_version=$(flatpak remote-info --log flathub $GNOME_PLATFORM_ID 2>/dev/null | grep -oP "Version: \K[0-9\.]+" | sort -V | tail -n 1)
                 if [ -z "$latest_gnome_version" ]; then
-                    latest_gnome_version=48  # Используем актуальную версию по состоянию на март 2025
+                    latest_gnome_version="46" # Безопасный fallback
                     print_warning "Не удалось определить последнюю версию GNOME Platform, используем версию $latest_gnome_version"
                 else
                     print_success "Определена последняя версия GNOME Platform: $latest_gnome_version"
                 fi
-                
-                # Установка платформы GNOME последней версии
-                run_command "flatpak install -y flathub org.gnome.Platform//$latest_gnome_version"
-                
-                print_success "Настройка Flathub и GNOME Software завершена"
-            else
-                print_warning "Пропускаем настройку Flathub из-за отсутствия необходимых пакетов"
-            fi
-            ;;
-        9)
-            # 9. Настройка управления питанием
-            print_header "9. Настройка управления питанием"
-            
-            # Проверка необходимых пакетов
-            if check_and_install_packages "Управление питанием" "power-profiles-daemon" "thermald" "tlp"; then
-                # Активация необходимых служб
-                run_command "sudo systemctl enable power-profiles-daemon.service"
-                run_command "sudo systemctl start power-profiles-daemon.service"
-                
-                # Thermald для управления температурой
-                run_command "sudo systemctl enable thermald"
-                run_command "sudo systemctl start thermald"
-                
-                # Настройка TLP для мобильных устройств
-                cat << EOF | sudo tee /etc/tlp.conf.d/01-custom.conf > /dev/null
-# TLP настройки для энергоэффективности
-CPU_SCALING_GOVERNOR_ON_AC=performance
-CPU_SCALING_GOVERNOR_ON_BAT=powersave
-
-CPU_ENERGY_PERF_POLICY_ON_AC=performance
-CPU_ENERGY_PERF_POLICY_ON_BAT=power
-
-PLATFORM_PROFILE_ON_AC=performance
-PLATFORM_PROFILE_ON_BAT=low-power
-
-PCIE_ASPM_ON_AC=default
-PCIE_ASPM_ON_BAT=powersupersave
-EOF
-                
-                run_command "sudo systemctl enable tlp.service"
-                run_command "sudo systemctl start tlp.service"
-                
-                # Настройка swappiness для оптимизации использования ОЗУ
-                cat << EOF | sudo tee /etc/sysctl.d/99-swappiness.conf > /dev/null
-vm.swappiness=10
-EOF
-                
-                run_command "sudo sysctl vm.swappiness=10"
-                
-                print_success "Настройка управления питанием завершена"
-            else
-                print_warning "Пропускаем настройку управления питанием из-за отсутствия необходимых пакетов"
-            fi
-            ;;
-        10)
-            # 10. Настройка локализации и безопасности
-            print_header "10. Настройка локализации и безопасности"
-            
-            # Настройка русской локали
-            if ! grep -q "ru_RU.UTF-8 UTF-8" /etc/locale.gen; then
-                echo "ru_RU.UTF-8 UTF-8" | sudo tee -a /etc/locale.gen > /dev/null
-                run_command "sudo locale-gen"
-            fi
-            
-            # Установка системной локали
-            echo "LANG=ru_RU.UTF-8" | sudo tee /etc/locale.conf > /dev/null
-            
-            # Настройка часового пояса
-            if confirm "Установить часовой пояс для Москвы?"; then
-                run_command "sudo ln -sf /usr/share/zoneinfo/Europe/Moscow /etc/localtime"
-                run_command "sudo hwclock --systohc"
-            fi
-            
-            # Настройка базового файрвола
-            if check_and_install_packages "Безопасность" "ufw"; then
-                run_command "sudo systemctl enable ufw"
-                run_command "sudo systemctl start ufw"
-                run_command "sudo ufw default deny incoming"
-                run_command "sudo ufw default allow outgoing"
-                run_command "sudo ufw allow ssh"
-                run_command "sudo ufw enable"
-                
-                # Отключение core dumps
-                echo "* hard core 0" | sudo tee -a /etc/security/limits.conf > /dev/null
-                echo "* soft core 0" | sudo tee -a /etc/security/limits.conf > /dev/null
-                echo "kernel.core_pattern=/dev/null" | sudo tee -a /etc/sysctl.d/51-coredump.conf > /dev/null
-                run_command "sudo sysctl -p /etc/sysctl.d/51-coredump.conf"
-            else
-                print_warning "Пропускаем настройку файрвола из-за отсутствия необходимых пакетов"
-            fi
-            
-            print_success "Настройка локализации и безопасности завершена"
-            ;;
-        11)
-            # 11. Установка дополнительных программ
-            print_header "11. Установка дополнительных программ"
-            
-            # Проверка необходимых пакетов
-            utils=("htop" "neofetch" "bat" "exa" "ripgrep" "fd")
-            if check_and_install_packages "Утилиты командной строки" "${utils[@]}"; then
-                print_success "Установка утилит командной строки завершена"
-            fi
-            
-            # Настройка gnome-keyring
-            if check_and_install_packages "Хранение паролей" "gnome-keyring" "seahorse"; then
-                # Добавление настроек gnome-keyring в bash_profile
-                if ! grep -q "gnome-keyring-daemon" ~/.bash_profile; then
-                    echo "eval \$(gnome-keyring-daemon --start)" >> ~/.bash_profile
-                    echo "export SSH_AUTH_SOCK" >> ~/.bash_profile
-                    print_success "Настройки gnome-keyring добавлены в bash_profile"
+                if confirm "Установить Flatpak GNOME Platform $latest_gnome_version?"; then
+                    run_command "flatpak install -y flathub ${GNOME_PLATFORM_ID}//$latest_gnome_version"
                 fi
             else
-                print_warning "Пропускаем настройку gnome-keyring из-за отсутствия необходимых пакетов"
+                print_success "Flatpak GNOME Platform Runtime уже установлен."
             fi
-            
-            print_success "Установка дополнительных программ завершена"
+            print_success "Настройка Flathub завершена."
             ;;
-        12)
-            # 12. Установка Timeshift для резервного копирования
-            print_header "12. Установка Timeshift для резервного копирования"
-            
-            # Проверка необходимых пакетов
-            if check_and_install_packages "Резервное копирование" "timeshift"; then
-                # Базовая настройка Timeshift для BTRFS
-                if [ -d "$HOME/.config/timeshift" ]; then
-                    print_warning "Конфигурация Timeshift уже существует"
-                    print_warning "Запустите 'sudo timeshift-gtk' для ручной настройки"
+
+        8) # Настройка TLP
+            print_header "8. Настройка управления питанием (TLP)"
+            print_warning "Установщик включил 'tuned'. TLP/power-profiles-daemon могут с ним конфликтовать."
+            if systemctl is-active --quiet tuned; then
+                if confirm "Отключить службу 'tuned', чтобы использовать TLP?"; then
+                    run_command "sudo systemctl disable --now tuned"
                 else
-                    print_warning "После установки рекомендуется запустить 'sudo timeshift-gtk' для настройки"
-                    print_warning "Выберите тип снапшотов 'BTRFS'"
-                    run_command "sudo timeshift --btrfs"
+                    print_warning "Пропускаем настройку TLP/PPD, т.к. 'tuned' активен."
+                    continue
+                fi
+            fi
+            # Установка Thermald и TLP
+            if check_and_install_packages "Управление питанием (доп.)" "thermald" "tlp" "tlp-rdw"; then
+                # Thermald
+                if ! systemctl is-enabled --quiet thermald; then
+                    print_info "Включение thermald..."
+                    run_command "sudo systemctl enable --now thermald"
+                else
+                    print_success "Thermald уже включен."
+                fi
+                # TLP Config
+                TLP_CONF="/etc/tlp.conf.d/01-mini-pc.conf"
+                echo "Проверка $TLP_CONF..."
+                if [ ! -f "$TLP_CONF" ]; then
+                    echo "Создание $TLP_CONF..."
+                    cat << EOF | sudo tee "$TLP_CONF" > /dev/null
+# TLP mini-pc (mini-pc.sh) - Performance oriented
+TLP_ENABLE=1
+CPU_SCALING_GOVERNOR_ON_AC=performance
+CPU_SCALING_GOVERNOR_ON_BAT=performance
+CPU_ENERGY_PERF_POLICY_ON_AC=performance
+CPU_ENERGY_PERF_POLICY_ON_BAT=performance
+PCIE_ASPM_ON_AC=performance
+PCIE_ASPM_ON_BAT=performance
+USB_AUTOSUSPEND=0
+WIFI_PWR_ON_AC=on
+WIFI_PWR_ON_BAT=on
+WOL_DISABLE=Y
+SOUND_POWER_SAVE_ON_AC=0
+SOUND_POWER_SAVE_ON_BAT=0
+RUNTIME_PM_ON_AC=on
+RUNTIME_PM_ON_BAT=on
+EOF
+                    print_success "$TLP_CONF создан."
+                else
+                    print_success "$TLP_CONF уже существует."
+                fi
+                # Enable TLP Services
+                if ! systemctl is-enabled --quiet tlp; then
+                    print_info "Включение служб TLP..."
+                    run_command "sudo systemctl enable --now tlp"
+                    run_command "sudo systemctl enable NetworkManager-dispatcher.service" # Needed for tlp-rdw
+                    run_command "sudo systemctl mask systemd-rfkill.service systemd-rfkill.socket" # Recommended by TLP
+                else
+                    print_success "Служба TLP уже включена."
+                fi
+                # Swappiness (Installer уже настроил sysctl для zram, эта настройка может быть избыточна)
+                SWAPPINESS_CONF="/etc/sysctl.d/99-swappiness-zram.conf"
+                echo "Проверка swappiness ($SWAPPINESS_CONF)..."
+                if [ ! -f "$SWAPPINESS_CONF" ]; then
+                    echo "Настройка vm.swappiness для ZRAM..."
+                    echo "vm.swappiness=100 # High value for active ZRAM usage" | sudo tee "$SWAPPINESS_CONF" > /dev/null
+                    run_command "sudo sysctl --system"
+                    print_success "Swappiness настроен."
+                else
+                    print_success "Настройка swappiness уже существует: $(sudo sysctl vm.swappiness)"
                 fi
             else
-                print_warning "Пропускаем установку Timeshift из-за отсутствия необходимых пакетов"
+                print_warning "Пропуск настройки управления питанием (нет пакетов)."
             fi
-            
-            print_success "Установка Timeshift завершена"
             ;;
-        13)
-            # 13. Настройка современного аудио-стека (PipeWire)
-            print_header "13. Настройка современного аудио-стека (PipeWire)"
-            
-            # Проверка необходимых пакетов
-            audio_packages=("pipewire" "pipewire-alsa" "pipewire-pulse" "pipewire-jack" "wireplumber" "gst-plugin-pipewire")
-            if check_and_install_packages "Аудио" "${audio_packages[@]}"; then
-                # Остановка PulseAudio, если запущен
-                systemctl --user stop pulseaudio.socket pulseaudio.service || true
-                systemctl --user disable pulseaudio.socket pulseaudio.service || true
-                
-                # Включение сервиса и установка как замены PulseAudio
-                run_command "systemctl --user enable pipewire pipewire-pulse wireplumber"
-                run_command "systemctl --user start pipewire pipewire-pulse wireplumber"
-                
-                # Оптимизация для профессионального аудио
-                mkdir -p ~/.config/pipewire/pipewire.conf.d
-                cat << EOF > ~/.config/pipewire/pipewire.conf.d/10-lowlatency.conf
+
+        9) # Firewall / Core Dumps
+            print_header "9. Настройка Firewall и Core Dumps"
+            # UFW
+            if check_and_install_packages "Безопасность (UFW)" "ufw"; then
+                if ! systemctl is-enabled --quiet ufw; then
+                    print_info "Настройка и включение UFW..."
+                    run_command "sudo ufw default deny incoming"
+                    run_command "sudo ufw default allow outgoing"
+                    run_command "sudo ufw allow ssh" # Важно для удаленного доступа
+                    # run_command "sudo ufw allow Samba" # Пример для Samba
+                    run_command "sudo ufw enable" # Включает и добавляет в автозагрузку
+                    print_success "UFW настроен и включен."
+                else
+                    print_success "UFW уже включен. Текущие правила:"
+                    sudo ufw status verbose
+                fi
+            else
+                print_warning "Пропуск настройки UFW (нет пакетов)."
+            fi
+            # Core Dumps Disable
+            LIMITS_CONF="/etc/security/limits.d/nocore.conf"
+            SYSCTL_CORE_CONF="/etc/sysctl.d/51-coredump-disable.conf"
+            echo "Проверка отключения Core Dumps..."
+            if [ ! -f "$LIMITS_CONF" ] || [ ! -f "$SYSCTL_CORE_CONF" ]; then
+                print_info "Отключение Core Dumps..."
+                echo "* hard core 0" | sudo tee "$LIMITS_CONF" > /dev/null
+                echo "* soft core 0" | sudo tee -a "$LIMITS_CONF" > /dev/null
+                echo "kernel.core_pattern=/dev/null" | sudo tee "$SYSCTL_CORE_CONF" > /dev/null
+                run_command "sudo sysctl -p $SYSCTL_CORE_CONF"
+                print_success "Core Dumps отключены."
+            else
+                print_success "Core Dumps уже отключены."
+            fi
+            print_success "Настройка безопасности завершена."
+            ;;
+
+        10) # Доп. утилиты / Seahorse
+            print_header "10. Установка доп. утилит и Seahorse"
+            cli_utils=("neofetch" "bat" "exa" "ripgrep" "fd" "htop")
+            check_and_install_packages "Доп. утилиты CLI" "${cli_utils[@]}"
+            # Seahorse для управления ключами (Gnome Keyring уже установлен)
+            check_and_install_packages "Seahorse (GUI для ключей)" "seahorse"
+            print_success "Проверка/установка дополнительных программ завершена."
+            ;;
+
+        11) # Timeshift
+            print_header "11. Установка Timeshift (системный диск)"
+            if check_and_install_packages "Резервное копирование" "timeshift"; then
+                # Проверяем, настроен ли уже Timeshift (хотя бы пытается ли он монтировать снапшоты)
+                if ! grep -q "/run/timeshift/backup" /etc/fstab; then
+                    print_warning "Timeshift не настроен. Рекомендуется запустить 'sudo timeshift-gtk'."
+                    echo "В настройках выберите:"
+                    echo "  - Тип снапшотов: BTRFS"
+                    echo "  - Местоположение BTRFS: выберите ваш системный раздел ($ROOT_DEVICE)"
+                    echo "  - Уровни снапшотов (по желанию)"
+                    if confirm "Запустить графический конфигуратор timeshift-gtk сейчас?"; then
+                        timeshift-launcher # Используем launcher для правильного запуска с правами
+                    fi
+                else
+                    print_success "Timeshift (BTRFS) уже настроен в /etc/fstab (или пытается монтировать)."
+                    print_info "Запустите 'sudo timeshift-gtk' для управления снапшотами."
+                fi
+            else
+                print_warning "Пропуск установки Timeshift (нет пакетов)."
+            fi
+            ;;
+
+        12) # PipeWire Low Latency
+            print_header "12. Тонкая настройка PipeWire (Low Latency)"
+            print_success "PipeWire и Wireplumber установлены и настроены установщиком."
+            PW_CONF_DIR="$HOME/.config/pipewire/pipewire.conf.d"
+            LOWLATENCY_CONF="$PW_CONF_DIR/10-lowlatency.conf"
+            echo "Проверка конфигурации PipeWire Low Latency ($LOWLATENCY_CONF)..."
+            if [ ! -f "$LOWLATENCY_CONF" ]; then
+                print_info "Создание конфигурации PipeWire Low Latency..."
+                run_command "mkdir -p $PW_CONF_DIR"
+                # Настройки для низкой задержки
+                cat << EOF > "$LOWLATENCY_CONF"
 context.properties = {
-  default.clock.rate = 48000
-  default.clock.allowed-rates = [ 44100 48000 88200 96000 192000 ]
-  default.clock.quantum = 256
-  default.clock.min-quantum = 32
-  default.clock.max-quantum = 8192
+    # default.clock.rate          = 48000
+    # default.clock.allowed-rates = [ 44100, 48000, 88200, 96000 ] # Пример
+    default.clock.quantum       = 256  # Buffer size (lower = less latency)
+    default.clock.min-quantum   = 32   # Minimal buffer size
+    default.clock.max-quantum   = 1024 # Maximal buffer size (default 8192)
 }
 EOF
-                print_success "Настройка PipeWire завершена"
+                print_success "Конфигурация PipeWire Low Latency создана: $LOWLATENCY_CONF"
+                print_warning "Перезапустите PipeWire/Wireplumber или перезагрузите сеанс для применения:"
+                echo "  systemctl --user restart pipewire pipewire-pulse wireplumber"
             else
-                print_warning "Пропускаем настройку PipeWire из-за отсутствия необходимых пакетов"
+                print_success "Конфигурация PipeWire Low Latency уже существует ($LOWLATENCY_CONF)."
             fi
             ;;
-        14)
-            # 14. Оптимизация памяти и производительности
-            print_header "14. Оптимизация памяти и производительности"
-            
-            cat << EOF | sudo tee /etc/sysctl.d/99-performance.conf > /dev/null
-# Уменьшение задержки обмена данными для улучшения отзывчивости системы
+
+        13) # Доп. оптимизация производительности
+             print_header "13. Дополнительная оптимизация производительности"
+             # Sysctl tweaks
+             SYSCTL_PERF_CONF="/etc/sysctl.d/99-performance-tweaks.conf"
+             echo "Проверка sysctl для производительности ($SYSCTL_PERF_CONF)..."
+             if [ ! -f "$SYSCTL_PERF_CONF" ]; then
+                 print_info "Применение дополнительных настроек sysctl..."
+                 cat << EOF | sudo tee "$SYSCTL_PERF_CONF" > /dev/null
+# Performance Tweaks (mini-pc.sh)
 vm.dirty_ratio = 10
 vm.dirty_background_ratio = 5
-
-# Увеличение лимитов для файловых дескрипторов
 fs.file-max = 100000
-
-# Оптимизация файловой системы
 fs.inotify.max_user_watches = 524288
-
-# Оптимизация сети
-net.core.netdev_max_backlog = 16384
-net.core.somaxconn = 8192
-net.ipv4.tcp_fastopen = 3
 EOF
-
-            run_command "sudo sysctl --system"
-            
-            # Оптимизация сервисов systemd
-            if [ -d "/etc/systemd" ]; then
-                cat << EOF | sudo tee /etc/systemd/system.conf.d/timeout.conf > /dev/null
+                 run_command "sudo sysctl --system"
+                 print_success "Дополнительные настройки sysctl применены."
+             else
+                 print_success "Дополнительные настройки sysctl уже существуют ($SYSCTL_PERF_CONF)."
+             fi
+             # Systemd timeouts
+             SYSTEMD_TIMEOUT_CONF="/etc/systemd/system.conf.d/timeout.conf"
+             echo "Проверка таймаутов systemd ($SYSTEMD_TIMEOUT_CONF)..."
+             if [ ! -f "$SYSTEMD_TIMEOUT_CONF" ]; then
+                 print_info "Уменьшение таймаутов systemd..."
+                 run_command "sudo mkdir -p /etc/systemd/system.conf.d/"
+                 cat << EOF | sudo tee "$SYSTEMD_TIMEOUT_CONF" > /dev/null
 [Manager]
-DefaultTimeoutStartSec=15s
-DefaultTimeoutStopSec=15s
+DefaultTimeoutStartSec=10s
+DefaultTimeoutStopSec=10s
 EOF
-                
-                cat << EOF | sudo tee /etc/systemd/system.conf.d/memory.conf > /dev/null
-[Manager]
-DefaultMemoryAccounting=yes
-DefaultTasksAccounting=yes
-EOF
-                
-                run_command "sudo systemctl daemon-reload"
-            fi
-            
-            # Отключение неиспользуемых служб
-            unused_services=("bluetooth.service" "avahi-daemon.service" "cups.service")
-            
+                 run_command "sudo systemctl daemon-reload"
+                 print_success "Таймауты systemd настроены."
+             else
+                 print_success "Настройка таймаутов systemd уже существует ($SYSTEMD_TIMEOUT_CONF)."
+             fi
+             # Disable unused services
+            echo "Проверка статуса служб для возможного отключения..."
+            unused_services=("bluetooth.service" "avahi-daemon.service" "cups.socket") # cups - socket activated
             for service in "${unused_services[@]}"; do
-                if systemctl is-enabled --quiet "$service" 2>/dev/null; then
-                    if confirm "Отключить $service?"; then
-                        run_command "sudo systemctl disable $service"
-                        run_command "sudo systemctl stop $service"
+                # Проверяем и активен ли, и включен ли
+                is_active=$(systemctl is-active --quiet "$service"; echo $?)
+                is_enabled=$(systemctl is-enabled --quiet "$service"; echo $?)
+                if [ "$is_active" -eq 0 ] || [ "$is_enabled" -eq 0 ]; then
+                    if confirm "Служба '$service' активна или включена. Отключить её?"; then
+                        run_command "sudo systemctl disable --now $service"
                     fi
+                else
+                    print_info "Служба '$service' неактивна и не включена."
                 fi
             done
-            
-            print_success "Оптимизация производительности завершена"
+            print_success "Дополнительная оптимизация производительности завершена."
             ;;
-        15)
-            # 15. Настройка функциональных клавиш (F1-F12)
-            print_header "15. Настройка функциональных клавиш (F1-F12)"
-            
-            # Системная настройка на уровне ядра
-            grep -q "fnmode=2" /etc/modprobe.d/hid_apple.conf 2>/dev/null || { 
-                echo "Настройка драйвера клавиатуры..."; 
-                echo "options hid_apple fnmode=2" | sudo tee /etc/modprobe.d/hid_apple.conf > /dev/null && 
-                sudo mkinitcpio -P && 
-                echo "Настройка драйвера клавиатуры завершена"; 
-            }
-            
-            # Также добавим параметр загрузки ядра (для более широкой совместимости)
-            if ! grep -q "hid_apple.fnmode=2" /etc/kernel/cmdline.d/keyboard.conf 2>/dev/null; then
-                echo "hid_apple.fnmode=2" | sudo tee /etc/kernel/cmdline.d/keyboard.conf > /dev/null
-                # Обновление загрузчика
-                run_command "sudo bootctl update"
+
+        14) # Настройка Fn-клавиш
+            print_header "14. Настройка Fn-клавиш (Apple Keyboard)"
+            print_warning "Эта настройка актуальна в основном для клавиатур Apple."
+            # Modprobe config
+            HID_APPLE_CONF="/etc/modprobe.d/hid_apple.conf"
+            echo "Проверка $HID_APPLE_CONF..."
+            if ! grep -q "options hid_apple fnmode=2" "$HID_APPLE_CONF" 2>/dev/null; then
+                echo "Настройка драйвера hid_apple для стандартного поведения F-клавиш..."
+                echo "options hid_apple fnmode=2" | sudo tee "$HID_APPLE_CONF" > /dev/null
+                print_success "Настройка $HID_APPLE_CONF создана."
+                print_warning "Требуется перестроение initramfs (sudo mkinitcpio -P) и перезагрузка."
+            else
+                 print_success "Настройка hid_apple fnmode=2 уже существует в $HID_APPLE_CONF."
             fi
-            
-            print_success "Настройка функциональных клавиш завершена"
-            print_warning "Изменения вступят в силу после перезагрузки"
-            
-            # Инструкция для пользователя как временно переключаться
-            echo "Примечание: Для временного переключения между функциональными и мультимедийными клавишами"
-            echo "вы можете использовать комбинацию Fn+Esc (на большинстве клавиатур) или Fn+F1-F12 для"
-            echo "доступа к мультимедийным функциям."
+            # Kernel cmdline parameter
+            CMDLINE_KBD_CONF="/etc/kernel/cmdline.d/keyboard-fnmode.conf"
+            echo "Проверка параметра ядра в $CMDLINE_KBD_CONF..."
+             if [ ! -f "$CMDLINE_KBD_CONF" ] || ! grep -q "hid_apple.fnmode=2" "$CMDLINE_KBD_CONF"; then
+                 echo "Добавление параметра ядра hid_apple.fnmode=2..."
+                 echo "hid_apple.fnmode=2" | sudo tee "$CMDLINE_KBD_CONF" > /dev/null
+                 run_command "sudo bootctl update" # Обновляем загрузчик
+                 print_success "Параметр ядра добавлен."
+             else
+                 print_success "Параметр ядра hid_apple.fnmode=2 уже установлен."
+             fi
+            print_success "Настройка функциональных клавиш завершена (если используется hid_apple)."
+            print_warning "Изменения вступят в силу после перестроения initramfs и перезагрузки."
             ;;
-        *)
-            print_warning "Некорректный выбор. Пожалуйста, введите число от 0 до 15."
+
+        15) # Установка Steam
+            print_header "15. Установка Steam (Intel графика)"
+            print_info "Убедитесь, что репозиторий [multilib] включен в /etc/pacman.conf (должен быть включен установщиком)."
+
+            # Зависимости ставим автоматически ДО Steam
+            steam_deps=(
+                "vulkan-intel"          # Intel Vulkan driver (64-bit)
+                "lib32-vulkan-intel"    # Intel Vulkan driver (32-bit)
+                "mesa"                  # OpenGL drivers (64-bit) - скорее всего уже есть
+                "lib32-mesa"            # OpenGL drivers (32-bit) - скорее всего уже есть
+                "xorg-mkfontscale"      # Font utilities
+                "xorg-fonts-cyrillic"   # Cyrillic fonts for Xorg
+                "xorg-fonts-misc"       # Misc fonts for Xorg
+            )
+
+            if check_and_install_packages "Зависимости Steam для Intel" "${steam_deps[@]}"; then
+                print_success "Зависимости Steam установлены/проверены."
+
+                # Установка самого Steam - ИНТЕРАКТИВНО
+                if ! check_package "steam"; then
+                    print_warning "Сейчас будет запущена ИНТЕРАКТИВНАЯ установка Steam."
+                    print_warning "Когда появится список 'провайдеров', выберите опцию с 'intel',"
+                    print_warning "скорее всего это будет 'lib32-vulkan-intel' или подобное."
+                    read -p "Нажмите Enter для запуска 'sudo pacman -S steam'..."
+
+                    if sudo pacman -S steam; then
+                        print_success "Steam успешно установлен (интерактивно)."
+                    else
+                        print_error "Ошибка во время интерактивной установки Steam."
+                        continue # Возврат в главное меню
+                    fi
+                else
+                    print_success "Пакет Steam уже установлен."
+                fi
+                print_info "Для первого запуска Steam может потребоваться перезагрузка сеанса или системы."
+            else
+                print_warning "Установка зависимостей Steam не удалась или была отменена. Steam не установлен."
+            fi
+            ;;
+
+        *) # Некорректный выбор
+            print_warning "Некорректный выбор. Введите число от 0 до 15."
             ;;
     esac
-    
+
     # Пауза перед возвратом в меню
     echo ""
-    read -p "Нажмите Enter, чтобы продолжить..."
+    read -p "Нажмите Enter для продолжения..."
+
 done
+
+# --- Конец скрипта ---
