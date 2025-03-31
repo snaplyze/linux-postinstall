@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # mini-pc-arch-setup.sh - Оптимизированный скрипт настройки Arch Linux для мини-ПК
-# Версия: 1.7 (Исправлена синтаксическая ошибка в шаге 8, добавлены проверки)
+# Версия: 1.7.1 (Исправлена ошибка в шаге 8, улучшены проверки и форматирование)
 # Цель: Дополнительная настройка системы, установленной с помощью installer.sh
 
 # ==============================================================================
@@ -95,11 +95,12 @@ check_command() {
 # Если чего-то нет, выводит ошибку и возвращает 1, иначе 0
 check_essentials() {
     local missing_cmds=()
-    # Основные команды, которые должны быть всегда после базовой установки
+    # Основные команды, которые должны быть всегда после базовой установки Arch
     local essentials=(
         "grep" "tee" "mkdir" "cat" "systemctl" "sysctl" "awk" "sed"
         "mount" "umount" "lsblk" "chown" "blkid" "uname" "lscpu" "free"
-        "findmnt" "date" "read" "sudo" "rm" "cp"
+        "findmnt" "date" "read" "sudo" "rm" "cp" "basename" "dirname" "mktemp"
+        "true" "false" "echo" "printf" "test" "[" "[[" "cut" "sort" "uniq" "head" "tail"
     )
     for cmd in "${essentials[@]}"; do
         if ! check_command "$cmd"; then
@@ -151,11 +152,14 @@ check_and_install_packages() {
         echo -e "${YELLOW}Отсутствуют: ${missing_packages[*]}${NC}"
         if confirm "Установить эти пакеты?"; then
             # Используем run_command для установки с флагом critical
+            # Флаг critical здесь важен, чтобы скрипт не продолжался с отсутствующими зависимостями
             if ! run_command "sudo pacman -S --needed --noconfirm ${missing_packages[*]}" "critical"; then
                  print_error "Не удалось завершить команду установки пакетов."
-                 return 1 # Ошибка выполнения pacman
+                 # Run_command с critical уже выйдет из скрипта, но оставим return на всякий случай
+                 return 1
             fi
-            # Дополнительная проверка после попытки установки
+            # Дополнительная проверка после попытки установки (run_command уже проверил код возврата pacman)
+            # Эта проверка нужна на случай, если pacman завершился с 0, но пакеты по какой-то причине не установились
             local failed_install=()
             for pkg in "${missing_packages[@]}"; do
                 if ! check_package "$pkg"; then
@@ -163,7 +167,7 @@ check_and_install_packages() {
                 fi
             done
             if [ ${#failed_install[@]} -gt 0 ]; then
-                print_error "Пакеты НЕ установились: ${failed_install[*]}. Операция не может быть продолжена."
+                print_error "Пакеты НЕ установились (хотя pacman завершился успешно?): ${failed_install[*]}. Операция не может быть продолжена."
                 return 1 # Ошибка, пакеты фактически не установились
             else
                 print_success "Пакеты успешно установлены."
@@ -174,7 +178,7 @@ check_and_install_packages() {
             return 1 # Пользователь отказался
         fi
     else
-        echo -e "${GREEN}Все необходимые пакеты уже установлены${NC}"
+        echo -e "${GREEN}Все необходимые пакеты уже установлены.${NC}"
         return 0 # Успех, все уже есть
     fi
 }
@@ -192,6 +196,7 @@ if [ "$EUID" -eq 0 ]; then
 fi
 
 # Проверка только самых базовых команд для самого скрипта
+# pacman для check_package, command для check_command, read для меню/confirm
 base_deps=("bash" "pacman" "command" "read" "sudo")
 missing_deps=()
 for cmd in "${base_deps[@]}"; do
@@ -201,6 +206,7 @@ for cmd in "${base_deps[@]}"; do
 done
 if [ ${#missing_deps[@]} -gt 0 ]; then
     print_error "Отсутствуют критические для работы скрипта команды: ${missing_deps[*]}"
+    print_error "Установите пакеты, предоставляющие эти команды (coreutils, bash, pacman)."
     exit 1
 fi
 
@@ -218,8 +224,8 @@ fi
 # ==============================================================================
 print_header "Информация о системе"
 
-# Проверяем команды перед использованием
-if ! check_essentials "uname" "lscpu" "free" "findmnt" "btrfs" "lsblk" "grep" "awk" "cat"; then
+# Проверяем команды перед использованием для вывода информации
+if ! check_essentials "uname" "lscpu" "free" "findmnt" "btrfs" "lsblk" "grep" "awk" "cat" "cut" "sed"; then
     print_error "Не могу собрать полную информацию о системе из-за отсутствия команд."
 else
     echo "Ядро Linux:      $(uname -r)"
@@ -229,12 +235,18 @@ else
     echo "Процессор:      ${cpu_model:-Не определен}"
     mem_total=$(free -h | awk '/^Mem:/ {print $2}')
     echo "Память (RAM):   ${mem_total:-Не определено}"
-    ROOT_DEVICE=$(findmnt -no SOURCE / | sed 's/\[.*\]//')
-    echo "Системный диск: ${ROOT_DEVICE:-Не определен} (ФС: BTRFS)"
+    ROOT_DEVICE=$(findmnt -no SOURCE / | sed 's/\[.*\]//') # Пример: /dev/sda2[/@]
+    ROOT_PART_ONLY=$(echo "$ROOT_DEVICE" | sed 's/\[.*\]//') # Пример: /dev/sda2
+    echo "Системный диск: ${ROOT_PART_ONLY:-Не определен} (ФС: BTRFS)"
     fstab_root_opts=$(grep "[[:space:]]/[[:space:]]" /etc/fstab | awk '{print $4}')
     echo "Опции '/'(fstab): ${fstab_root_opts:-Не найдены}"
     echo "BTRFS подтома на '/':"
-    sudo btrfs subvolume list / || echo "   (Не удалось получить список подтомов)"
+    # Используем sudo для btrfs, может понадобиться пароль
+    if check_command "btrfs"; then
+        sudo btrfs subvolume list / || echo "   (Не удалось получить список подтомов - ошибка btrfs или нужны права)"
+    else
+        echo "   (Команда btrfs не найдена)"
+    fi
     echo -e "\nБлочные устройства:"
     lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
 fi
@@ -245,9 +257,8 @@ if ! check_command "bootctl"; then
 elif [ -d "/boot/loader" ] && [ -f "/boot/loader/loader.conf" ]; then
     print_success "Обнаружена конфигурация systemd-boot"
 else
-    print_error "Не найдена конфигурация systemd-boot (/boot/loader/loader.conf)."
-    # Не критично для работы скрипта, но важно для пользователя
-    if ! confirm "Продолжить выполнение скрипта?"; then exit 1; fi
+    print_warning "Конфигурация systemd-boot (/boot/loader/loader.conf) не найдена."
+    # Не критично для большинства шагов, но важно для шага 5 и 14
 fi
 
 # Определение ядра (linux-zen установлен инсталлятором)
@@ -259,8 +270,7 @@ elif [ -f "/boot/vmlinuz-linux" ]; then
     print_success "Обнаружено ядро: $KERNEL_NAME (не -zen)"
 else
     print_warning "Стандартное ядро (linux) или linux-zen не найдено в /boot."
-    # Попробуем угадать, но это может быть неправильно
-    KERNEL_NAME="linux"
+    KERNEL_NAME="linux" # Fallback, может быть неверным
     if ! confirm "Попробовать продолжить, предполагая имя ядра '$KERNEL_NAME'?"; then exit 1; fi
 fi
 
@@ -297,20 +307,20 @@ while true; do
 
         1) # Обновление системы
             print_header "1. Обновление системы"
-            if ! check_essentials; then continue; fi
+            if ! check_essentials; then continue; fi # Проверка базовых команд sudo, pacman
             run_command "sudo pacman -Syu --noconfirm" "critical"
-            # Проверка результата не нужна, т.к. critical
             print_success "Система обновлена."
             ;;
 
         2) # Доп. настройка Intel графики
             print_header "2. Дополнительная настройка Intel графики (Wayland)"
-            if ! check_essentials "mkinitcpio"; then continue; fi
+            if ! check_essentials "mkinitcpio" "grep" "tee"; then continue; fi
             if ! check_and_install_packages "Intel графика (доп.)" "intel-media-driver" "qt6-wayland" "qt5-wayland"; then continue; fi
 
             I915_CONF="/etc/modprobe.d/i915.conf"
             I915_OPTS="options i915 enable_fbc=1 enable_guc=2 enable_dc=4"
             echo "Проверка $I915_CONF..."
+            # Используем sudo для чтения, если у пользователя нет прав
             if [ ! -f "$I915_CONF" ] || ! sudo grep -qF "$I915_OPTS" "$I915_CONF" 2>/dev/null; then
                 echo "Обновление $I915_CONF..."
                 echo "# Intel Graphics Opts (mini-pc.sh)" | sudo tee "$I915_CONF" > /dev/null
@@ -326,6 +336,7 @@ while true; do
 
             ENV_FILE="/etc/environment"
             echo "Проверка $ENV_FILE..."
+            # Проверяем наличие ключевых переменных
             if [ ! -f "$ENV_FILE" ] || ! sudo grep -q "LIBVA_DRIVER_NAME=iHD" "$ENV_FILE" 2>/dev/null || ! sudo grep -q "MOZ_ENABLE_WAYLAND=1" "$ENV_FILE" 2>/dev/null ; then
                 echo "Обновление $ENV_FILE..."
                 cat << EOF | sudo tee "$ENV_FILE" > /dev/null
@@ -343,7 +354,7 @@ EOF
 
         3) # Доп. оптимизация BTRFS
             print_header "3. Дополнительная оптимизация BTRFS (системный диск)"
-            if ! check_essentials "btrfs" "sysctl"; then continue; fi
+            if ! check_essentials "btrfs" "sysctl" "grep" "awk" "tee"; then continue; fi
             print_success "TRIM и базовые опции монтирования системного диска настроены установщиком."
             echo "Текущие опции монтирования '/': $(grep "[[:space:]]/[[:space:]]" /etc/fstab | awk '{print $4}')"
 
@@ -369,7 +380,7 @@ EOF
 
         4) # Форматирование второго SSD в Ext4
             print_header "4. Форматирование и монтирование второго SSD в Ext4 (/mnt/ssd)"
-            if ! check_essentials "parted" "mkfs.ext4" "wipefs" "sgdisk" "blkid" "lsblk" "mount" "umount" "chown"; then continue; fi
+            if ! check_essentials "parted" "mkfs.ext4" "wipefs" "sgdisk" "blkid" "lsblk" "mount" "umount" "chown" "basename" "awk" "grep" "sed"; then continue; fi
             if ! check_and_install_packages "GVFS (для отображения диска)" "gvfs"; then continue; fi
 
             print_warning "ВНИМАНИЕ! Все данные на выбранном диске будут БЕЗВОЗВРАТНО УНИЧТОЖЕНЫ!"
@@ -377,23 +388,14 @@ EOF
             ROOT_DISK_BASE=$(basename "$ROOT_DEVICE" | sed 's/[0-9]*$//; s/p[0-9]*$//')
             mapfile -t disk_options < <(lsblk -dpno NAME,SIZE,TYPE | grep 'disk' | grep -v "^/dev/${ROOT_DISK_BASE}" | awk '{print $1" ("$2")"}')
 
-            if [ ${#disk_options[@]} -eq 0 ]; then print_warning "Дополнительные диски не найдены."; continue; fi
+            if [ ${#disk_options[@]} -eq 0 ]; then print_warning "Дополнительные диски (кроме системного) не найдены."; continue; fi
 
             echo "Доступные диски для форматирования:"
             disk_choice="" # Сбрасываем выбор
             select opt in "${disk_options[@]}" "Отмена"; do
-                # $REPLY содержит номер выбора
-                if [[ "$REPLY" == $((${#disk_options[@]} + 1)) ]]; then # Номер опции "Отмена"
-                    disk_choice="Отмена"
-                    break
-                elif [[ "$REPLY" -ge 1 && "$REPLY" -le ${#disk_options[@]} ]]; then # Корректный номер диска
-                    disk_choice="${disk_options[$REPLY-1]}"
-                    second_disk=$(echo "$disk_choice" | awk '{print $1}')
-                    print_info "Выбран диск: $second_disk"
-                    break
-                else
-                    print_warning "Неверный выбор. Введите номер из списка."
-                fi
+                if [[ "$REPLY" == $((${#disk_options[@]} + 1)) ]]; then disk_choice="Отмена"; break
+                elif [[ "$REPLY" -ge 1 && "$REPLY" -le ${#disk_options[@]} ]]; then disk_choice="${disk_options[$REPLY-1]}"; second_disk=$(echo "$disk_choice" | awk '{print $1}'); print_info "Выбран диск: $second_disk"; break
+                else print_warning "Неверный выбор. Введите номер из списка."; fi
             done
             if [ "$disk_choice" == "Отмена" ]; then print_warning "Операция отменена."; continue; fi
 
@@ -406,11 +408,11 @@ EOF
                 if ! run_command "sudo parted -s -a optimal $second_disk mkpart primary ext4 0% 100%" "critical"; then continue; fi
                 sleep 2
                 new_partition_name=$(lsblk -lno NAME $second_disk | grep -E "${second_disk##*/}[p]?1$")
-                if [ -z "$new_partition_name" ]; then print_error "Не удалось определить раздел."; continue; fi
+                if [ -z "$new_partition_name" ]; then print_error "Не удалось определить имя раздела."; continue; fi
                 new_partition="/dev/$new_partition_name"
-                if [ ! -b "$new_partition" ]; then print_error "'$new_partition' не блок."; continue; fi
+                if [ ! -b "$new_partition" ]; then print_error "'$new_partition' не блочное устройство."; continue; fi
                 print_success "Создан раздел: $new_partition"
-                print_info "Форматирование Ext4 (метка 'SSD')..."
+                print_info "Форматирование $new_partition в Ext4 (метка 'SSD')..."
                 if ! run_command "sudo mkfs.ext4 -L SSD $new_partition" "critical"; then continue; fi
                 mount_point="/mnt/ssd"
                 if ! run_command "sudo mkdir -p $mount_point"; then continue; fi
@@ -420,12 +422,12 @@ EOF
                 if ! run_command "sudo cp /etc/fstab /etc/fstab.backup.$(date +%F_%T)"; then print_warning "Бэкап fstab не создан."; fi
                 sudo sed -i "/UUID=$DATA_UUID/d" /etc/fstab
                 fstab_line="UUID=$DATA_UUID  $mount_point  ext4  defaults,noatime,x-gvfs-show  0 2"
-                echo "# Второй SSD (Ext4, /mnt/ssd, mini-pc.sh)" | sudo tee -a /etc/fstab > /dev/null
+                echo "# Второй SSD - (Ext4, SSD, /mnt/ssd, mini-pc.sh)" | sudo tee -a /etc/fstab > /dev/null
                 if ! echo "$fstab_line" | sudo tee -a /etc/fstab > /dev/null; then print_error "Запись в fstab не удалась."; continue; fi
                 print_success "Строка добавлена в fstab: $fstab_line"
                 if ! run_command "sudo systemctl daemon-reload"; then continue; fi
                 if ! run_command "sudo mount -a" "critical"; then print_warning "Не удалось смонтировать (проверьте 'sudo findmnt --verify')."; continue; fi
-                print_info "Установка прав для $mount_point..."
+                print_info "Установка прав доступа для $mount_point..."
                 if ! run_command "sudo chown $(whoami):$(whoami) $mount_point"; then print_warning "Не удалось сменить владельца $mount_point."; fi
                 print_success "Диск $second_disk отформатирован и примонтирован."
             fi # Конец confirm
@@ -433,7 +435,7 @@ EOF
 
         5) # Скрытие логов
             print_header "5. Уточнение настройки скрытия логов при загрузке"
-            if ! check_essentials "bootctl"; then continue; fi
+            if ! check_essentials "bootctl" "mkdir" "tee" "grep"; then continue; fi
             print_success "Plymouth и 'quiet splash' настроены установщиком."
             QUIET_PARAMS="loglevel=3 rd.systemd.show_status=auto rd.udev.log_priority=3"
             CMDLINE_FILE="/etc/kernel/cmdline.d/quiet-extra.conf"
@@ -461,12 +463,13 @@ EOF
         6) # Настройка Paru
             print_header "6. Настройка пользовательского Paru"
             if ! check_command "paru"; then print_error "Команда paru не найдена."; continue; fi
+            if ! check_essentials "mkdir" "cat"; then continue; fi
             print_success "Paru установлен системно."
             PARU_USER_CONF="$HOME/.config/paru/paru.conf"
             echo "Проверка $PARU_USER_CONF..."
             if [ ! -f "$PARU_USER_CONF" ]; then
                 echo "Создание $PARU_USER_CONF..."
-                if run_command "mkdir -p '$HOME/.config/paru'"; then # Кавычки для ~
+                if run_command "mkdir -p '$HOME/.config/paru'"; then
                     cat << EOF > "$PARU_USER_CONF"
 # ~/.config/paru/paru.conf
 [options]
@@ -519,7 +522,6 @@ EOF
             TLP_CONF="/etc/tlp.conf.d/01-mini-pc.conf"; echo "Проверка $TLP_CONF...";
             if [ ! -f "$TLP_CONF" ]; then
                 echo "Создание $TLP_CONF..."
-                # ИСПРАВЛЕНО: Перенос print_success после EOF
                 cat << EOF | sudo tee "$TLP_CONF" > /dev/null
 # TLP mini-pc Performance (mini-pc.sh)
 TLP_ENABLE=1
@@ -536,21 +538,21 @@ SOUND_POWER_SAVE_ON_BAT=0
 RUNTIME_PM_ON_AC=on
 RUNTIME_PM_ON_BAT=on
 EOF
+                # Исправлено: Проверка после EOF
                 if [ $? -eq 0 ]; then print_success "$TLP_CONF создан."; else print_error "Не удалось создать $TLP_CONF."; fi
             else print_success "$TLP_CONF уже существует."; fi
             if ! systemctl is-enabled --quiet tlp; then print_info "Включение TLP..."; run_command "sudo systemctl enable --now tlp"; run_command "sudo systemctl enable NetworkManager-dispatcher.service"; run_command "sudo systemctl mask systemd-rfkill.service systemd-rfkill.socket"; else print_success "TLP включен."; fi
             SWAPPINESS_CONF="/etc/sysctl.d/99-swappiness-zram.conf"; echo "Проверка swappiness...";
-            if [ ! -f "$SWAPPINESS_CONF" ]; then echo "Настройка swappiness..."; echo "vm.swappiness=100 # High value for ZRAM" | sudo tee "$SWAPPINESS_CONF" > /dev/null; run_command "sudo sysctl --system"; print_success "Swappiness настроен."; else print_success "Swappiness уже настроен: $(sudo sysctl -n vm.swappiness)"; fi
+            if [ ! -f "$SWAPPINESS_CONF" ]; then echo "Настройка vm.swappiness..."; echo "vm.swappiness=100 # High value for ZRAM" | sudo tee "$SWAPPINESS_CONF" > /dev/null; run_command "sudo sysctl --system"; print_success "Swappiness настроен."; else print_success "Swappiness уже настроен: $(sudo sysctl -n vm.swappiness)"; fi
             print_success "Настройка управления питанием завершена."
             ;;
 
         9) # Firewall / Core Dumps
             print_header "9. Настройка Firewall и Core Dumps"
-            if ! check_essentials "ufw" "sysctl"; then continue; fi
+            if ! check_essentials "ufw" "sysctl" "tee" "grep"; then continue; fi
             if check_and_install_packages "Безопасность (UFW)" "ufw"; then
                 if ! systemctl is-enabled --quiet ufw; then
-                    print_info "Настройка и включение UFW...";
-                    run_command "sudo ufw default deny incoming"; run_command "sudo ufw default allow outgoing"; run_command "sudo ufw allow ssh"
+                    print_info "Настройка и включение UFW..."; run_command "sudo ufw default deny incoming"; run_command "sudo ufw default allow outgoing"; run_command "sudo ufw allow ssh"
                     if run_command "echo y | sudo ufw enable"; then print_success "UFW включен."; else print_error "Не удалось включить UFW."; fi
                 else print_success "UFW уже включен."; sudo ufw status verbose; fi
             else print_warning "Пропуск UFW."; fi
@@ -564,6 +566,7 @@ EOF
 
         10) # Доп. утилиты / Seahorse
             print_header "10. Установка доп. утилит и Seahorse"
+            # check_essentials не нужен, т.к. только установка пакетов
             cli_utils=("neofetch" "bat" "exa" "ripgrep" "fd" "htop")
             check_and_install_packages "Доп. утилиты CLI" "${cli_utils[@]}"
             check_and_install_packages "Seahorse (GUI для ключей)" "seahorse"
@@ -573,6 +576,7 @@ EOF
         11) # Timeshift
             print_header "11. Установка Timeshift (системный диск)"
             if ! check_command "timeshift-launcher"; then if ! check_and_install_packages "Резервное копирование" "timeshift"; then continue; fi; fi
+            if ! check_essentials "grep"; then continue; fi
             if ! grep -q "/run/timeshift/backup" /etc/fstab; then
                 print_warning "Timeshift не настроен для BTRFS в fstab."; echo "Рекомендуется запустить 'sudo timeshift-gtk' (Тип: BTRFS, Раздел: $ROOT_DEVICE)."
                 if confirm "Запустить timeshift-launcher сейчас?"; then if ! timeshift-launcher; then print_error "Не удалось запустить timeshift-launcher."; fi; fi
@@ -599,12 +603,17 @@ EOF
              SYSCTL_PERF_CONF="/etc/sysctl.d/99-performance-tweaks.conf"; echo "Проверка sysctl...";
              if [ ! -f "$SYSCTL_PERF_CONF" ]; then print_info "Применение sysctl..."; cat << EOF | sudo tee "$SYSCTL_PERF_CONF" > /dev/null
 # Perf Tweaks (mini-pc.sh)
-vm.dirty_ratio=10; vm.dirty_background_ratio=5; fs.file-max=100000; fs.inotify.max_user_watches=524288
+vm.dirty_ratio=10
+vm.dirty_background_ratio=5
+fs.file-max=100000
+fs.inotify.max_user_watches=524288
 EOF
 ; if run_command "sudo sysctl --system"; then print_success "Sysctl применены."; fi; else print_success "$SYSCTL_PERF_CONF уже есть."; fi
              SYSTEMD_TIMEOUT_CONF="/etc/systemd/system.conf.d/timeout.conf"; echo "Проверка таймаутов...";
              if [ ! -f "$SYSTEMD_TIMEOUT_CONF" ]; then print_info "Уменьшение таймаутов..."; if run_command "sudo mkdir -p /etc/systemd/system.conf.d/"; then cat << EOF | sudo tee "$SYSTEMD_TIMEOUT_CONF" > /dev/null
-[Manager]; DefaultTimeoutStartSec=10s; DefaultTimeoutStopSec=10s
+[Manager]
+DefaultTimeoutStartSec=10s
+DefaultTimeoutStopSec=10s
 EOF
 ; run_command "sudo systemctl daemon-reload"; print_success "Таймауты настроены."; fi; else print_success "Настройка таймаутов есть."; fi
              echo "Проверка служб..."; unused_services=("bluetooth.service" "avahi-daemon.service" "cups.socket");
@@ -614,19 +623,19 @@ EOF
 
         14) # Настройка Fn-клавиш
             print_header "14. Настройка Fn-клавиш (Apple Keyboard)"
-            if ! check_essentials "mkinitcpio" "bootctl"; then continue; fi
+            if ! check_essentials "mkinitcpio" "bootctl" "grep" "tee"; then continue; fi
             print_warning "Актуально для клавиатур Apple.";
             HID_APPLE_CONF="/etc/modprobe.d/hid_apple.conf"; echo "Проверка $HID_APPLE_CONF...";
             if ! sudo grep -q "options hid_apple fnmode=2" "$HID_APPLE_CONF" 2>/dev/null; then echo "Настройка hid_apple..."; echo "options hid_apple fnmode=2" | sudo tee "$HID_APPLE_CONF" > /dev/null; print_success "$HID_APPLE_CONF создан."; print_warning "Требуется 'sudo mkinitcpio -P' и перезагрузка."; if confirm "Перестроить initramfs?"; then run_command "sudo mkinitcpio -P"; fi; else print_success "Настройка fnmode=2 уже есть."; fi
             CMDLINE_KBD_CONF="/etc/kernel/cmdline.d/keyboard-fnmode.conf"; echo "Проверка параметра ядра...";
-            if [ ! -f "$CMDLINE_KBD_CONF" ] || ! sudo grep -q "hid_apple.fnmode=2" "$CMDLINE_KBD_CONF" 2>/dev/null; then echo "Добавление параметра ядра..."; echo "hid_apple.fnmode=2" | sudo tee "$CMDLINE_KBD_CONF" > /dev/null; if run_command "sudo bootctl update"; then print_success "Параметр ядра добавлен."; fi; else print_success "Параметр ядра уже есть."; fi
+            if [ ! -f "$CMDLINE_KBD_CONF" ] || ! sudo grep -q "hid_apple.fnmode=2" "$CMDLINE_KBD_CONF" 2>/dev/null; then echo "Добавление параметра ядра..."; echo "hid_apple.fnmode=2" | sudo tee "$CMDLINE_KBD_CONF" > /dev/null; if run_command "sudo bootctl update"; then print_success "Параметр ядра добавлен."; fi; else print_success "Параметр ядра уже установлен."; fi
             print_success "Настройка Fn-клавиш завершена."; print_warning "Может потребоваться перезагрузка."
             ;;
 
         15) # Установка Steam
             print_header "15. Установка Steam (Intel графика)"
-            if ! check_essentials; then continue; fi
-            print_info "Убедитесь, что [multilib] включен в /etc/pacman.conf."
+            if ! check_essentials; then continue; fi # Нужен pacman
+            print_info "Убедитесь, что [multilib] включен в /etc/pacman.conf (проверьте сами)."
             steam_deps=(
                 "vulkan-intel" "lib32-vulkan-intel" "mesa" "lib32-mesa"
                 "xorg-mkfontscale" "xorg-fonts-cyrillic" "xorg-fonts-misc"
@@ -639,14 +648,15 @@ EOF
 
             if ! check_package "steam"; then
                 print_warning "Сейчас будет запущена ИНТЕРАКТИВНАЯ установка Steam."
-                print_warning "Выберите номер опции с 'intel' (напр., 'lib32-vulkan-intel')."
+                print_warning "Когда появится список 'провайдеров', выберите номер опции с 'intel',"
+                print_warning "(например, 'lib32-vulkan-intel')."
                 read -p "Нажмите Enter для запуска 'sudo pacman -S steam'..."
-                # Выполняем pacman интерактивно
+                # Выполняем pacman интерактивно, без run_command
                 if sudo pacman -S steam; then
                     print_success "Steam успешно установлен."
                 else
-                    print_error "Команда установки Steam завершилась с ошибкой. Проверьте вывод выше."
-                    # Не прерываем, пользователь мог прервать сам или были ошибки с хуками
+                    # Код возврата pacman может быть > 0 даже при успешной установке (ошибки хуков и т.п.)
+                    print_error "Команда установки Steam завершилась с ошибкой (код $?). Проверьте вывод выше."
                 fi
             else
                 print_success "Пакет Steam уже установлен."
