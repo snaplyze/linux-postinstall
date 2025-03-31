@@ -452,7 +452,7 @@ EOF
                 # Получаем все версии, сортируем по номеру, берем последнюю
                 latest_gnome_version=$(flatpak remote-info --log flathub $GNOME_PLATFORM_ID 2>/dev/null | grep -oP "Version: \K[0-9\.]+" | sort -V | tail -n 1)
                 if [ -z "$latest_gnome_version" ]; then
-                    latest_gnome_version="46" # Безопасный fallback
+                    latest_gnome_version="48" # Безопасный fallback
                     print_warning "Не удалось определить последнюю версию GNOME Platform, используем версию $latest_gnome_version"
                 else
                     print_success "Определена последняя версия GNOME Platform: $latest_gnome_version"
