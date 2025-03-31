@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # mini-pc-arch-setup.sh - Оптимизированный скрипт настройки Arch Linux для мини-ПК
-# Версия: 1.7.1 (Исправлена ошибка в шаге 8, улучшены проверки и форматирование)
+# Версия: 1.7.2 (Исправлены мелкие синтаксические проблемы)
 # Цель: Дополнительная настройка системы, установленной с помощью installer.sh
 
 # ==============================================================================
@@ -28,6 +28,10 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}✗ $1${NC}"
+}
+
+print_info() {
+    echo -e "${BLUE}ℹ $1${NC}"
 }
 
 # ==============================================================================
@@ -522,7 +526,7 @@ EOF
             TLP_CONF="/etc/tlp.conf.d/01-mini-pc.conf"; echo "Проверка $TLP_CONF...";
             if [ ! -f "$TLP_CONF" ]; then
                 echo "Создание $TLP_CONF..."
-                cat << EOF | sudo tee "$TLP_CONF" > /dev/null
+                result=$(cat << EOF | sudo tee "$TLP_CONF" > /dev/null
 # TLP mini-pc Performance (mini-pc.sh)
 TLP_ENABLE=1
 CPU_SCALING_GOVERNOR_ON_AC=performance
@@ -538,9 +542,15 @@ SOUND_POWER_SAVE_ON_BAT=0
 RUNTIME_PM_ON_AC=on
 RUNTIME_PM_ON_BAT=on
 EOF
-                # Исправлено: Проверка после EOF
-                if [ $? -eq 0 ]; then print_success "$TLP_CONF создан."; else print_error "Не удалось создать $TLP_CONF."; fi
-            else print_success "$TLP_CONF уже существует."; fi
+)
+                if [ $? -eq 0 ]; then 
+                    print_success "$TLP_CONF создан."
+                else 
+                    print_error "Не удалось создать $TLP_CONF."
+                fi
+            else 
+                print_success "$TLP_CONF уже существует."
+            fi
             if ! systemctl is-enabled --quiet tlp; then print_info "Включение TLP..."; run_command "sudo systemctl enable --now tlp"; run_command "sudo systemctl enable NetworkManager-dispatcher.service"; run_command "sudo systemctl mask systemd-rfkill.service systemd-rfkill.socket"; else print_success "TLP включен."; fi
             SWAPPINESS_CONF="/etc/sysctl.d/99-swappiness-zram.conf"; echo "Проверка swappiness...";
             if [ ! -f "$SWAPPINESS_CONF" ]; then echo "Настройка vm.swappiness..."; echo "vm.swappiness=100 # High value for ZRAM" | sudo tee "$SWAPPINESS_CONF" > /dev/null; run_command "sudo sysctl --system"; print_success "Swappiness настроен."; else print_success "Swappiness уже настроен: $(sudo sysctl -n vm.swappiness)"; fi
@@ -590,34 +600,71 @@ EOF
             print_success "PipeWire/Wireplumber установлены."
             PW_CONF_DIR="$HOME/.config/pipewire/pipewire.conf.d"; LOWLATENCY_CONF="$PW_CONF_DIR/10-lowlatency.conf"; echo "Проверка $LOWLATENCY_CONF...";
             if [ ! -f "$LOWLATENCY_CONF" ]; then
-                print_info "Создание Low Latency конфига..."; if run_command "mkdir -p '$PW_CONF_DIR'"; then cat << EOF > "$LOWLATENCY_CONF"
+                print_info "Создание Low Latency конфига..."
+                if run_command "mkdir -p '$PW_CONF_DIR'"; then 
+                    cat << EOF > "$LOWLATENCY_CONF"
 context.properties = { default.clock.quantum=256; default.clock.min-quantum=32; default.clock.max-quantum=1024 }
 EOF
-; print_success "$LOWLATENCY_CONF создан."; print_warning "Перезапустите PipeWire/сеанс."; echo "  systemctl --user restart pipewire pipewire-pulse wireplumber"; else print_error "Не удалось создать '$PW_CONF_DIR'."; fi
-            else print_success "$LOWLATENCY_CONF уже существует."; fi
+                    print_success "$LOWLATENCY_CONF создан."
+                    print_warning "Перезапустите PipeWire/сеанс."
+                    echo "  systemctl --user restart pipewire pipewire-pulse wireplumber"
+                else 
+                    print_error "Не удалось создать '$PW_CONF_DIR'."
+                fi
+            else 
+                print_success "$LOWLATENCY_CONF уже существует."
+            fi
             ;;
 
         13) # Доп. оптимизация производительности
              print_header "13. Дополнительная оптимизация производительности"
              if ! check_essentials "sysctl" "systemctl" "tee" "mkdir" "grep"; then continue; fi
              SYSCTL_PERF_CONF="/etc/sysctl.d/99-performance-tweaks.conf"; echo "Проверка sysctl...";
-             if [ ! -f "$SYSCTL_PERF_CONF" ]; then print_info "Применение sysctl..."; cat << EOF | sudo tee "$SYSCTL_PERF_CONF" > /dev/null
+             if [ ! -f "$SYSCTL_PERF_CONF" ]; then 
+                 print_info "Применение sysctl..."
+                 cat << EOF | sudo tee "$SYSCTL_PERF_CONF" > /dev/null
 # Perf Tweaks (mini-pc.sh)
 vm.dirty_ratio=10
 vm.dirty_background_ratio=5
 fs.file-max=100000
 fs.inotify.max_user_watches=524288
 EOF
-; if run_command "sudo sysctl --system"; then print_success "Sysctl применены."; fi; else print_success "$SYSCTL_PERF_CONF уже есть."; fi
+                 if run_command "sudo sysctl --system"; then 
+                     print_success "Sysctl применены."
+                 fi
+             else 
+                 print_success "$SYSCTL_PERF_CONF уже есть."
+             fi
+             
              SYSTEMD_TIMEOUT_CONF="/etc/systemd/system.conf.d/timeout.conf"; echo "Проверка таймаутов...";
-             if [ ! -f "$SYSTEMD_TIMEOUT_CONF" ]; then print_info "Уменьшение таймаутов..."; if run_command "sudo mkdir -p /etc/systemd/system.conf.d/"; then cat << EOF | sudo tee "$SYSTEMD_TIMEOUT_CONF" > /dev/null
+             if [ ! -f "$SYSTEMD_TIMEOUT_CONF" ]; then 
+                 print_info "Уменьшение таймаутов..."
+                 if run_command "sudo mkdir -p /etc/systemd/system.conf.d/"; then 
+                     cat << EOF | sudo tee "$SYSTEMD_TIMEOUT_CONF" > /dev/null
 [Manager]
 DefaultTimeoutStartSec=10s
 DefaultTimeoutStopSec=10s
 EOF
-; run_command "sudo systemctl daemon-reload"; print_success "Таймауты настроены."; fi; else print_success "Настройка таймаутов есть."; fi
-             echo "Проверка служб..."; unused_services=("bluetooth.service" "avahi-daemon.service" "cups.socket");
-             for service in "${unused_services[@]}"; do is_active=$(systemctl is-active --quiet "$service"; echo $?); is_enabled=$(systemctl is-enabled --quiet "$service"; echo $?); if [ "$is_active" -eq 0 ] || [ "$is_enabled" -eq 0 ]; then if confirm "Отключить '$service'?"; then run_command "sudo systemctl disable --now $service"; fi; else print_info "'$service' неактивна/не включена."; fi; done
+                     run_command "sudo systemctl daemon-reload"
+                     print_success "Таймауты настроены."
+                 fi
+             else 
+                 print_success "Настройка таймаутов есть."
+             fi
+             
+             echo "Проверка служб..."
+             unused_services=("bluetooth.service" "avahi-daemon.service" "cups.socket")
+             for service in "${unused_services[@]}"; do 
+                 is_active=$(systemctl is-active --quiet "$service"; echo $?)
+                 is_enabled=$(systemctl is-enabled --quiet "$service"; echo $?)
+                 if [ "$is_active" -eq 0 ] || [ "$is_enabled" -eq 0 ]; then 
+                     if confirm "Отключить '$service'?"; then 
+                         run_command "sudo systemctl disable --now $service"
+                     fi
+                 else 
+                     print_info "'$service' неактивна/не включена."
+                 fi
+             done
              print_success "Дополнительная оптимизация завершена."
              ;;
 
