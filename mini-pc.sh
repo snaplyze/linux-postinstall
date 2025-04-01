@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # mini-pc-arch-setup.sh - Оптимизированный скрипт настройки Arch Linux для мини-ПК
-# Версия: 1.7.2 (Исправлены мелкие синтаксические проблемы)
+# Версия: 1.7.3 (Исправлены ошибки синтаксиса heredoc)
 # Цель: Дополнительная настройка системы, установленной с помощью installer.sh
 
 # ==============================================================================
@@ -526,7 +526,7 @@ EOF
             TLP_CONF="/etc/tlp.conf.d/01-mini-pc.conf"; echo "Проверка $TLP_CONF...";
             if [ ! -f "$TLP_CONF" ]; then
                 echo "Создание $TLP_CONF..."
-                result=$(cat << EOF | sudo tee "$TLP_CONF" > /dev/null
+                sudo tee "$TLP_CONF" > /dev/null << EOF
 # TLP mini-pc Performance (mini-pc.sh)
 TLP_ENABLE=1
 CPU_SCALING_GOVERNOR_ON_AC=performance
@@ -542,7 +542,6 @@ SOUND_POWER_SAVE_ON_BAT=0
 RUNTIME_PM_ON_AC=on
 RUNTIME_PM_ON_BAT=on
 EOF
-)
                 if [ $? -eq 0 ]; then 
                     print_success "$TLP_CONF создан."
                 else 
