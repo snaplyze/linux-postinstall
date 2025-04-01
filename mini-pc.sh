@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # mini-pc-arch-setup.sh - Оптимизированный скрипт настройки Arch Linux для мини-ПК
-# Версия: 1.7.3 (Исправлены ошибки синтаксиса heredoc)
+# Версия: 1.8.0 (Обновлены параметры для актуальных версий Arch Linux)
 # Цель: Дополнительная настройка системы, установленной с помощью installer.sh
 
 # ==============================================================================
@@ -322,7 +322,7 @@ while true; do
             if ! check_and_install_packages "Intel графика (доп.)" "intel-media-driver" "qt6-wayland" "qt5-wayland"; then continue; fi
 
             I915_CONF="/etc/modprobe.d/i915.conf"
-            I915_OPTS="options i915 enable_fbc=1 enable_guc=2 enable_dc=4"
+            I915_OPTS="options i915 enable_fbc=1 enable_guc=3 enable_dc=4 enable_psr=1"
             echo "Проверка $I915_CONF..."
             # Используем sudo для чтения, если у пользователя нет прав
             if [ ! -f "$I915_CONF" ] || ! sudo grep -qF "$I915_OPTS" "$I915_CONF" 2>/dev/null; then
@@ -348,6 +348,9 @@ while true; do
 LIBVA_DRIVER_NAME=iHD
 MOZ_ENABLE_WAYLAND=1
 QT_QPA_PLATFORM=wayland
+QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+XDG_SESSION_TYPE=wayland
+XDG_CURRENT_DESKTOP=gnome
 EOF
                 print_success "$ENV_FILE настроен для Wayland."
             else
@@ -439,15 +442,96 @@ EOF
 
         5) # Скрытие логов
             print_header "5. Уточнение настройки скрытия логов при загрузке"
-            if ! check_essentials "bootctl" "mkdir" "tee" "grep"; then continue; fi
+            if ! check_essentials "bootctl" "mkdir" "tee" "grep" "mkinitcpio" "find"; then continue; fi
             print_success "Plymouth и 'quiet splash' настроены установщиком."
             QUIET_PARAMS="loglevel=3 rd.systemd.show_status=auto rd.udev.log_priority=3"
-            CMDLINE_FILE="/etc/kernel/cmdline.d/quiet-extra.conf"
-            echo "Проверка $CMDLINE_FILE..."
-            if [ ! -f "$CMDLINE_FILE" ] || ! sudo grep -q "loglevel=3" "$CMDLINE_FILE" 2>/dev/null; then
-                echo "Добавление доп. параметров..."
-                if echo "$QUIET_PARAMS" | sudo tee "$CMDLINE_FILE" > /dev/null; then print_success "Параметры добавлены."; run_command "sudo bootctl update"; else print_error "Не удалось записать в $CMDLINE_FILE."; fi
-            else print_success "Доп. параметры уже есть."; fi
+            
+            # Проверим версию systemd для определения метода настройки
+            systemd_version=$(systemctl --version | head -n 1 | awk '{print $2}')
+            echo "Версия systemd: $systemd_version"
+            
+            need_initramfs_update=false
+            kernel_entries_updated=false
+            
+            # Современный метод для systemd 250+
+            if [ "$systemd_version" -ge 250 ]; then
+                CMDLINE_DIR="/etc/kernel/cmdline.d"
+                CMDLINE_FILE="$CMDLINE_DIR/01-quiet-params.conf"
+                echo "Используем новый метод параметров ядра через $CMDLINE_FILE (systemd 250+)"
+                
+                # Создаем директорию если нужно
+                if [ ! -d "$CMDLINE_DIR" ]; then
+                    echo "Создание директории $CMDLINE_DIR..."
+                    if ! run_command "sudo mkdir -p $CMDLINE_DIR"; then
+                        print_error "Не удалось создать директорию $CMDLINE_DIR."
+                        read -p "Нажмите Enter для продолжения..." temp
+                        continue
+                    fi
+                fi
+                
+                # Записываем параметры в файл
+                if [ ! -f "$CMDLINE_FILE" ] || ! sudo grep -q "loglevel=3" "$CMDLINE_FILE" 2>/dev/null; then
+                    echo "Добавление доп. параметров в $CMDLINE_FILE..."
+                    if echo "$QUIET_PARAMS" | sudo tee "$CMDLINE_FILE" > /dev/null; then 
+                        print_success "Параметры добавлены."
+                        need_initramfs_update=true
+                        run_command "sudo bootctl update"
+                        kernel_entries_updated=true
+                    else 
+                        print_error "Не удалось записать в $CMDLINE_FILE."
+                    fi
+                else 
+                    print_success "Доп. параметры уже есть в $CMDLINE_FILE."
+                fi
+            fi
+            
+            # Традиционный метод - редактирование файлов в /boot/loader/entries
+            if [ "$systemd_version" -lt 250 ] || [ "$kernel_entries_updated" = false ]; then
+                echo "Используем традиционный метод: редактирование файлов загрузчика..."
+                ENTRIES_DIR="/boot/loader/entries"
+                
+                if [ ! -d "$ENTRIES_DIR" ]; then
+                    print_error "Директория $ENTRIES_DIR не найдена. systemd-boot не настроен?"
+                    read -p "Нажмите Enter для продолжения..." temp
+                    continue
+                fi
+                
+                # Находим все файлы конфигурации загрузчика
+                conf_files=$(sudo find "$ENTRIES_DIR" -name "*.conf")
+                if [ -z "$conf_files" ]; then
+                    print_error "Файлы конфигурации не найдены в $ENTRIES_DIR"
+                    read -p "Нажмите Enter для продолжения..." temp
+                    continue
+                fi
+                
+                # Для каждого файла проверяем и обновляем параметры
+                for conf_file in $conf_files; do
+                    echo "Проверка файла $conf_file..."
+                    quiet_params_exist=false
+                    
+                    # Проверяем, есть ли уже loglevel=3
+                    if sudo grep -q "loglevel=3" "$conf_file"; then
+                        quiet_params_exist=true
+                        print_success "Параметры тихой загрузки уже есть в $conf_file"
+                        continue
+                    fi
+                    
+                    # Проверяем строку options
+                    options_line=$(sudo grep "^options" "$conf_file")
+                    if [ -n "$options_line" ]; then
+                        # Добавляем наши параметры к существующим
+                        echo "Обновление параметров в $conf_file..."
+                        new_options_line=$(echo "$options_line" | sed "s/\(options .*\)/\1 $QUIET_PARAMS/")
+                        sudo sed -i "s|^options.*|$new_options_line|" "$conf_file"
+                        print_success "Параметры загрузки обновлены в $conf_file"
+                        need_initramfs_update=true
+                    else
+                        print_warning "Строка options не найдена в $conf_file"
+                    fi
+                done
+            fi
+            
+            # Настройка журнала systemd
             JOURNALD_CONF="/etc/systemd/journald.conf.d/quiet.conf"
             echo "Проверка $JOURNALD_CONF..."
             if [ ! -f "$JOURNALD_CONF" ]; then
@@ -458,9 +542,27 @@ EOF
 TTYPath=/dev/null
 EOF
                         print_success "Журнал на TTY отключен."
+                        run_command "sudo systemctl restart systemd-journald"
                     fi
                 fi
-            else print_success "Настройка журнала TTY уже есть."; fi
+            else 
+                print_success "Настройка журнала TTY уже есть."
+            fi
+            
+            # Перестраиваем образ initramfs если были изменения
+            if [ "$need_initramfs_update" = true ]; then
+                print_info "Требуется обновление образа initramfs для применения параметров загрузки..."
+                if confirm "Выполнить sudo mkinitcpio -P сейчас?"; then
+                    if run_command "sudo mkinitcpio -P"; then
+                        print_success "Образ initramfs успешно обновлен."
+                    else
+                        print_error "Ошибка при обновлении образа initramfs."
+                    fi
+                else
+                    print_warning "Обновление образа initramfs пропущено. Параметры загрузки не будут применены до выполнения 'sudo mkinitcpio -P'."
+                fi
+            fi
+            
             print_success "Настройка тихой загрузки завершена."
             ;;
 
@@ -529,18 +631,22 @@ EOF
                 sudo tee "$TLP_CONF" > /dev/null << EOF
 # TLP mini-pc Performance (mini-pc.sh)
 TLP_ENABLE=1
-CPU_SCALING_GOVERNOR_ON_AC=performance
-CPU_SCALING_GOVERNOR_ON_BAT=performance
 CPU_ENERGY_PERF_POLICY_ON_AC=performance
 CPU_ENERGY_PERF_POLICY_ON_BAT=performance
+CPU_SCALING_GOVERNOR_ON_AC=performance
+CPU_SCALING_GOVERNOR_ON_BAT=performance
+PLATFORM_PROFILE_ON_AC=performance
+PLATFORM_PROFILE_ON_BAT=performance
 PCIE_ASPM_ON_AC=performance
-PCIE_ASPM_ON_BAT=performance
+PCIE_ASPM_ON_BAT=default
 USB_AUTOSUSPEND=0
 WOL_DISABLE=Y
 SOUND_POWER_SAVE_ON_AC=0
 SOUND_POWER_SAVE_ON_BAT=0
 RUNTIME_PM_ON_AC=on
-RUNTIME_PM_ON_BAT=on
+RUNTIME_PM_ON_BAT=auto
+WIFI_PWR_ON_AC=off
+WIFI_PWR_ON_BAT=on
 EOF
                 if [ $? -eq 0 ]; then 
                     print_success "$TLP_CONF создан."
@@ -576,7 +682,7 @@ EOF
         10) # Доп. утилиты / Seahorse
             print_header "10. Установка доп. утилит и Seahorse"
             # check_essentials не нужен, т.к. только установка пакетов
-            cli_utils=("neofetch" "bat" "exa" "ripgrep" "fd" "htop")
+            cli_utils=("neofetch" "bat" "eza" "ripgrep" "fd" "btop")
             check_and_install_packages "Доп. утилиты CLI" "${cli_utils[@]}"
             check_and_install_packages "Seahorse (GUI для ключей)" "seahorse"
             print_success "Проверка/установка дополнительных программ завершена."
@@ -602,7 +708,13 @@ EOF
                 print_info "Создание Low Latency конфига..."
                 if run_command "mkdir -p '$PW_CONF_DIR'"; then 
                     cat << EOF > "$LOWLATENCY_CONF"
-context.properties = { default.clock.quantum=256; default.clock.min-quantum=32; default.clock.max-quantum=1024 }
+context.properties = {
+    # Значения в микросекундах (1 мс = 1000 мкс)
+    default.clock.rate          = 48000
+    default.clock.quantum       = 256    # 5.3 мс при 48000 Гц
+    default.clock.min-quantum   = 32     # 0.7 мс при 48000 Гц
+    default.clock.max-quantum   = 1024   # 21.3 мс при 48000 Гц
+}
 EOF
                     print_success "$LOWLATENCY_CONF создан."
                     print_warning "Перезапустите PipeWire/сеанс."
@@ -685,6 +797,7 @@ EOF
             steam_deps=(
                 "vulkan-intel" "lib32-vulkan-intel" "mesa" "lib32-mesa"
                 "xorg-mkfontscale" "xorg-fonts-cyrillic" "xorg-fonts-misc"
+                "gamescope" "gamemode" "lib32-gamemode" "mangohud" "lib32-mangohud"
             )
             if ! check_and_install_packages "Зависимости Steam для Intel" "${steam_deps[@]}"; then
                  print_warning "Установка зависимостей Steam отменена/не удалась. Steam не будет установлен."
