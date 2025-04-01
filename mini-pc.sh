@@ -385,24 +385,46 @@ EOF
             print_success "Дополнительная оптимизация BTRFS завершена."
             ;;
 
-                4) # Форматирование второго SSD в Ext4
+        4) # Форматирование второго SSD в Ext4
             print_header "4. Форматирование и монтирование второго SSD в Ext4 (/mnt/ssd)"
-            # Добавим findmnt и realpath в проверку, они нужны для нового метода
-            if ! check_essentials "parted" "mkfs.ext4" "wipefs" "sgdisk" "blkid" "lsblk" "mount" "umount" "chown" "basename" "awk" "grep" "sed" "findmnt" "realpath"; then
-                print_error ">>> DEBUG: check_essentials failed."
+
+            # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
+            # 1. Проверяем и устанавливаем ВСЕ необходимые пакеты СНАЧАЛА
+            #    parted - для parted
+            #    e2fsprogs - для mkfs.ext4
+            #    gptfdisk - для sgdisk <--- Добавлен пакет для sgdisk
+            #    util-linux - для wipefs, blkid, lsblk, findmnt, mount, umount, realpath
+            #    gvfs - для интеграции с файловым менеджером
+            #    coreutils - для basename, chown, mkdir, tee и др. (обычно уже есть)
+            local required_pkgs=("parted" "e2fsprogs" "gptfdisk" "util-linux" "gvfs" "coreutils")
+            print_info "Проверка и установка пакетов для форматирования..."
+            # Используем флаг "critical", т.к. без этих пакетов операция невозможна
+            if ! check_and_install_packages "Утилиты для форматирования дисков" "${required_pkgs[@]}"; then
+                 print_error "Не удалось установить необходимые пакеты или установка отменена. Операция не может быть продолжена."
+                 read -p "Нажмите Enter для возврата в меню..."
+                 continue
+            fi
+            print_success "Необходимые пакеты установлены или уже присутствуют."
+
+            # 2. Теперь проверяем наличие самих КОМАНД после попытки установки пакетов
+            #    Убедимся, что sgdisk есть в списке
+            local required_cmds=("parted" "mkfs.ext4" "wipefs" "sgdisk" "blkid" "lsblk" "mount" "umount" "chown" "basename" "awk" "grep" "sed" "findmnt" "realpath" "mkdir" "tee")
+            print_info "Проверка наличия необходимых команд..."
+            if ! check_essentials "${required_cmds[@]}"; then
+                # Если check_essentials не прошел ДАЖЕ ПОСЛЕ установки, что-то не так
+                print_error ">>> DEBUG: check_essentials failed even after attempting package installation."
+                print_error "Хотя пакеты (${required_pkgs[*]}) должны были установиться, команды (${required_cmds[*]}) не найдены. Проверьте \$PATH или вывод установки пакетов."
                 read -p "Нажмите Enter для возврата в меню..."
                 continue
             fi
-            # Убедимся, что gvfs установлен, иначе диск может не отображаться в GNOME Files
-            if ! check_and_install_packages "GVFS (для отображения диска)" "gvfs"; then
-                print_warning ">>> DEBUG: check_and_install_packages for gvfs failed or was cancelled. Continuing..."
-                # Не прерываем, форматирование все еще возможно
-            fi
+            print_success "Все необходимые команды на месте."
+            # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
+            # --- Далее идет остальная часть кода пункта 4 ---
             print_warning "ВНИМАНИЕ! Все данные на выбранном диске будут БЕЗВОЗВРАТНО УНИЧТОЖЕНЫ!"
             echo "Текущие диски и разделы:"; lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
 
-            # --- Начало ИСПРАВЛЕННОЙ логики определения диска ---
+            # --- Начало логики определения диска ---
             print_info ">>> DEBUG: Определяем корневое устройство..."
             ROOT_DEV_NODE=$(findmnt -no SOURCE /)
             if [ -z "$ROOT_DEV_NODE" ]; then
@@ -415,8 +437,9 @@ EOF
             print_info ">>> DEBUG: Определяем реальный путь..."
             ROOT_REAL_PATH=$(realpath "$ROOT_DEV_NODE")
              if [ -z "$ROOT_REAL_PATH" ] || [ ! -b "$ROOT_REAL_PATH" ]; then
-                print_warning ">>> DEBUG: realpath не сработал для '$ROOT_DEV_NODE', пробуем $ROOT_DEVICE..."
-                ROOT_REAL_PATH=$(realpath "$ROOT_DEVICE") # ROOT_DEVICE определена глобально раньше
+                print_warning ">>> DEBUG: realpath не сработал для '$ROOT_DEV_NODE', пробуем глобальную переменную ROOT_DEVICE=$ROOT_DEVICE..."
+                # ROOT_DEVICE была определена ранее в скрипте
+                ROOT_REAL_PATH=$(realpath "$ROOT_DEVICE")
                 if [ -z "$ROOT_REAL_PATH" ] || [ ! -b "$ROOT_REAL_PATH" ]; then
                     print_error "Не удалось определить реальный путь к блочному устройству для корня ФС ($ROOT_DEV_NODE / $ROOT_DEVICE)."
                     read -p "Нажмите Enter для возврата в меню..."
@@ -440,11 +463,9 @@ EOF
             print_info ">>> DEBUG: Системный диск определен как: /dev/$ROOT_DISK_NAME"
 
             print_info ">>> DEBUG: Получаем список дисков для форматирования (исключая /dev/$ROOT_DISK_NAME)..."
-            # Используем временный файл для вывода lsblk для отладки
             temp_lsblk_output=$(mktemp)
             lsblk -dnpo NAME,SIZE,TYPE > "$temp_lsblk_output"
             print_info ">>> DEBUG: Полный вывод lsblk -dnpo NAME,SIZE,TYPE сохранен в $temp_lsblk_output"
-            # Команда для mapfile
             mapfile_cmd="mapfile -t disk_options < <(awk -v sys_disk=\"/dev/${ROOT_DISK_NAME}\" '\$3 == \"disk\" && \$1 != sys_disk {print \$1 \" (\" \$2 \")\"}' '$temp_lsblk_output')"
             print_info ">>> DEBUG: Выполняем: $mapfile_cmd"
             eval "$mapfile_cmd"
@@ -452,9 +473,8 @@ EOF
             print_info ">>> DEBUG: mapfile завершился с кодом: $mapfile_exit_code"
             print_info ">>> DEBUG: Найденные диски (disk_options): [${disk_options[*]}]"
             print_info ">>> DEBUG: Количество найденных дисков: ${#disk_options[@]}"
-            # rm "$temp_lsblk_output" # Можно раскомментировать после отладки
 
-            # --- Конец ИСПРАВЛЕННОЙ логики определения диска ---
+            # --- Конец логики определения диска ---
 
             if [ ${#disk_options[@]} -eq 0 ]; then
                 print_warning "Дополнительные диски (кроме системного /dev/${ROOT_DISK_NAME}), подходящие для форматирования, не найдены."
@@ -478,12 +498,10 @@ EOF
                     break
                 else
                     print_warning "Неверный выбор. Введите номер из списка."
-                    # Остаемся в цикле select
                 fi
             done
 
-            # Удаляем временный файл lsblk, если он еще существует
-             [ -f "$temp_lsblk_output" ] && rm "$temp_lsblk_output"
+            [ -f "$temp_lsblk_output" ] && rm "$temp_lsblk_output" # Удаляем временный файл, если он еще существует
 
             if [ "$disk_choice" == "Отмена" ]; then
                 print_warning "Операция отменена."
@@ -495,9 +513,6 @@ EOF
             if confirm "Точно форматировать $second_disk в Ext4 (метка 'SSD', точка /mnt/ssd)?"; then
                 print_info ">>> DEBUG: Подтверждение получено."
 
-                # ... (остальная часть логики форматирования без изменений, но можно добавить больше DEBUG выводов по аналогии при необходимости) ...
-
-                 # Проверяем, не смонтирован ли выбранный диск или его разделы
                 print_info ">>> DEBUG: Проверяем монтирование $second_disk..."
                 if mount | grep -q "$second_disk"; then
                     print_warning "Обнаружены смонтированные разделы на $second_disk. Попытка размонтирования..."
@@ -507,6 +522,7 @@ EOF
                         print_info ">>> DEBUG: Найдены точки монтирования для размонтирования: ${mounts_to_umount[*]}"
                         for mp in "${mounts_to_umount[@]}"; do
                             print_info ">>> DEBUG: Пытаемся размонтировать '$mp'..."
+                            # Используем run_command без "critical" для размонтирования
                             if ! run_command "sudo umount '$mp'"; then
                                 print_error "Не удалось размонтировать '$mp'"
                                 umount_failed=true
@@ -524,20 +540,24 @@ EOF
                 fi
 
                 print_info ">>> DEBUG: Очистка и разметка $second_disk..."
+                # Теперь команды должны выполняться, т.к. пакеты установлены
                 if ! run_command "sudo wipefs -af $second_disk" "critical"; then continue; fi
                 if ! run_command "sudo sgdisk --zap-all $second_disk" "critical"; then continue; fi
                 if ! run_command "sudo parted -s $second_disk mklabel gpt" "critical"; then continue; fi
                 if ! run_command "sudo parted -s -a optimal $second_disk mkpart primary ext4 0% 100%" "critical"; then continue; fi
 
                 print_info ">>> DEBUG: Пауза 5 секунд для распознавания раздела..."
-                sleep 5 # Увеличил паузу на всякий случай
+                sleep 5 # Увеличенная пауза
                 print_info ">>> DEBUG: Определяем имя нового раздела для $second_disk..."
-                new_partition_name=$(lsblk -lno NAME $second_disk | grep -E "${second_disk##*/}[p]?[0-9]+$")
+                # Пытаемся найти раздел вида /dev/sda1 или /dev/nvme0n1p1
+                new_partition_name=$(lsblk -lno NAME $second_disk | grep -E "${second_disk##*/}[p]?[0-9]+$" | head -n 1)
+
                 if [ -z "$new_partition_name" ]; then
                     print_error ">>> DEBUG: Не удалось определить имя нового раздела на $second_disk стандартным методом."
+                    # Резервный метод: ищем любой раздел, который не является самим диском
                     new_partition_name=$(lsblk -lno NAME $second_disk | grep -v "${second_disk##*/}" | head -n 1)
                      if [ -z "$new_partition_name" ]; then
-                          print_error "Резервный метод определения раздела тоже не сработал."
+                          print_error "Резервный метод определения раздела тоже не сработал. Проверьте вывод 'lsblk $second_disk' вручную."
                           continue
                      fi
                      print_warning ">>> DEBUG: Использован резервный метод определения раздела: $new_partition_name"
@@ -552,10 +572,11 @@ EOF
                 print_success "Создан раздел: $new_partition"
 
                 print_info ">>> DEBUG: Форматирование $new_partition..."
-                if ! run_command "sudo mkfs.ext4 -F -L SSD $new_partition" "critical"; then continue; fi
+                if ! run_command "sudo mkfs.ext4 -F -L SSD $new_partition" "critical"; then continue; fi # -F принудительно
 
                 mount_point="/mnt/ssd"
                 print_info ">>> DEBUG: Создание точки монтирования $mount_point..."
+                # -p создаст /mnt, если его нет
                 if ! run_command "sudo mkdir -p $mount_point"; then continue; fi
 
                 print_info ">>> DEBUG: Получение UUID для $new_partition..."
@@ -570,6 +591,7 @@ EOF
                 if ! run_command "sudo cp /etc/fstab /etc/fstab.backup.$(date +%F_%T)"; then
                     print_warning "Не удалось создать резервную копию /etc/fstab."
                 fi
+                # Удаляем старую запись для этого UUID на всякий случай
                 sudo sed -i "/UUID=$DATA_UUID/d" /etc/fstab
                 fstab_line="UUID=$DATA_UUID  $mount_point  ext4  defaults,noatime,x-gvfs-show  0 2"
                 echo "# Второй SSD - (Ext4, SSD, /mnt/ssd, mini-pc.sh)" | sudo tee -a /etc/fstab > /dev/null
@@ -583,21 +605,26 @@ EOF
                 if ! run_command "sudo systemctl daemon-reload"; then continue; fi
 
                 print_info ">>> DEBUG: Монтирование всего из fstab..."
+                # Используем "critical", так как если не монтируется, то что-то не так с fstab
                 if ! run_command "sudo mount -a" "critical"; then
-                    print_warning "Не удалось смонтировать все из fstab (проверьте 'sudo findmnt --verify'). Возможно, требуется перезагрузка."
+                    # run_command с critical уже выйдет, но оставим на всякий случай
+                    print_error "Критическая ошибка при монтировании из fstab. Проверьте '/etc/fstab' и вывод 'sudo mount -a'."
+                    continue
                 fi
 
                 print_info ">>> DEBUG: Проверяем, смонтирован ли $mount_point..."
                 if findmnt --mountpoint "$mount_point" > /dev/null; then
                     print_success "$mount_point успешно смонтирован."
                     print_info ">>> DEBUG: Установка прав доступа для $mount_point..."
+                    # Меняем владельца на текущего пользователя и его основную группу
                     if ! run_command "sudo chown $(whoami):$(id -gn) $mount_point"; then
                         print_warning "Не удалось сменить владельца $mount_point."
                     else
                          print_success "Владелец $mount_point изменен на $(whoami):$(id -gn)."
                     fi
                 else
-                    print_error "$mount_point НЕ смонтирован. Проверьте /etc/fstab и вывод 'sudo mount -a'."
+                     # Это не должно происходить, если mount -a прошло успешно с critical
+                    print_error "$mount_point НЕ смонтирован после 'mount -a'. Неожиданная ошибка."
                 fi
 
                 print_success "Операция с диском $second_disk завершена."
