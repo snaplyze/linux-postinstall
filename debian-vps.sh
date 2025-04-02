@@ -603,10 +603,23 @@ if [ "$SETUP_SWAP" = true ]; then
     
     # Получаем размер ОЗУ в килобайтах
     total_mem_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    # Конвертируем в мегабайты
+    total_mem_mb=$((total_mem_kb / 1024))
     # Вычисляем размер swap-файла (50% от ОЗУ в мегабайтах)
-    swap_size_mb=$((total_mem_kb / 2048))
+    swap_size_mb=$((total_mem_mb / 2))
     
-    echo "Создание swap-файла размером ${swap_size_mb}MB (50% от доступной ОЗУ)"
+    # Если ОЗУ меньше или равно 3 ГБ, устанавливаем swap = 2 ГБ
+    if [ $total_mem_mb -le 3072 ]; then
+        swap_size_mb=2048
+        echo "ОЗУ меньше или равно 3 ГБ, устанавливаем размер swap в 2 ГБ"
+    else
+        # Округляем до ближайшего целого ГБ
+        swap_size_gb=$(((swap_size_mb + 512) / 1024))
+        swap_size_mb=$((swap_size_gb * 1024))
+        echo "Размер ОЗУ: $total_mem_mb МБ, размер swap будет: $swap_size_mb МБ (${swap_size_gb} ГБ)"
+    fi
+    
+    echo "Создание swap-файла размером ${swap_size_mb} МБ"
     
     # Создаем swap-файл нужного размера
     dd if=/dev/zero of=/swapfile bs=1M count=$swap_size_mb
@@ -622,6 +635,7 @@ if [ "$SETUP_SWAP" = true ]; then
     fi
     
     # Проверка статуса swap
+    echo "Статус swap после настройки:"
     swapon --show
     free -h
 fi
