@@ -83,7 +83,12 @@ select_components() {
             color="yellow"
         fi
         
-        echo -ne "$color" "$status \033[0m$option (y/n): "
+        if [ "$color" = "green" ]; then
+            echo -ne "\033[0;32m$status \033[0m$option (y/n): "
+        else
+            echo -ne "\033[0;33m$status \033[0m$option (y/n): "
+        fi
+        
         read choice
         if [[ "$choice" == "y" || "$choice" == "Y" ]]; then
             eval "$var_name=true"
