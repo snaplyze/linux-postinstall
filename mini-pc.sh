@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # mini-pc-arch-setup.sh - Оптимизированный скрипт настройки Arch Linux для мини-ПК
-# Версия: 1.8.0 (Обновлены параметры для актуальных версий Arch Linux)
+# Версия: 1.9.1 (Исправлены синтаксические проблемы и улучшена совместимость)
 # Цель: Дополнительная настройка системы, установленной с помощью installer.sh
 
 # ==============================================================================
@@ -311,15 +311,53 @@ while true; do
 
         1) # Обновление системы
             print_header "1. Обновление системы"
-            if ! check_essentials; then continue; fi # Проверка базовых команд sudo, pacman
+            
+            # Проверка базовых пакетов для обновления системы
+            required_pkgs=("pacman")
+            print_info "Проверка базовых пакетов..."
+            # Этот пакет должен быть в системе по умолчанию, но на всякий случай проверяем
+            if ! check_package "pacman"; then
+                print_error "Базовый пакет 'pacman' не найден. Это критическая ошибка, обновление невозможно."
+                read -p "Нажмите Enter для возврата в меню..." anykey
+                continue
+            fi
+            
+            # Проверка наличия базовых команд
+            if ! check_essentials "sudo"; then 
+                print_error "Команда sudo не найдена. Установите пакет sudo."
+                read -p "Нажмите Enter для возврата в меню..." anykey
+                continue
+            fi
+            
+            print_success "Базовые компоненты в порядке."
             run_command "sudo pacman -Syu --noconfirm" "critical"
             print_success "Система обновлена."
             ;;
 
         2) # Доп. настройка Intel графики
             print_header "2. Дополнительная настройка Intel графики (Wayland)"
-            if ! check_essentials "mkinitcpio" "grep" "tee"; then continue; fi
-            if ! check_and_install_packages "Intel графика (доп.)" "intel-media-driver" "qt6-wayland" "qt5-wayland"; then continue; fi
+            
+            # Проверка и установка необходимых пакетов
+            required_pkgs=("intel-media-driver" "qt6-wayland" "qt5-wayland" "mkinitcpio")
+            print_info "Проверка пакетов для настройки Intel графики..."
+            # Примечание: при установке intel-media-driver может потребоваться выбрать опцию
+            if ! check_and_install_packages "Intel графика и Wayland" "${required_pkgs[@]}"; then
+                print_error "Не удалось установить необходимые пакеты для настройки Intel графики."
+                print_warning "Примечание: при установке intel-media-driver может потребоваться выбрать конкретную версию драйвера."
+                read -p "Нажмите Enter для возврата в меню..." anykey
+                continue
+            fi
+            
+            # Проверка наличия команд после установки пакетов
+            required_cmds=("mkinitcpio" "grep" "tee")
+            print_info "Проверка необходимых команд..."
+            if ! check_essentials "${required_cmds[@]}"; then
+                print_error "Необходимые команды не найдены даже после установки пакетов."
+                read -p "Нажмите Enter для возврата в меню..." anykey
+                continue
+            fi
+            
+            print_success "Все необходимые компоненты установлены."
 
             I915_CONF="/etc/modprobe.d/i915.conf"
             I915_OPTS="options i915 enable_fbc=1 enable_guc=3 enable_dc=4 enable_psr=1"
@@ -341,7 +379,9 @@ while true; do
             ENV_FILE="/etc/environment"
             echo "Проверка $ENV_FILE..."
             # Проверяем наличие ключевых переменных
-            if [ ! -f "$ENV_FILE" ] || ! sudo grep -q "LIBVA_DRIVER_NAME=iHD" "$ENV_FILE" 2>/dev/null || ! sudo grep -q "MOZ_ENABLE_WAYLAND=1" "$ENV_FILE" 2>/dev/null ; then
+            if [ ! -f "$ENV_FILE" ] || \
+               ! sudo grep -q "LIBVA_DRIVER_NAME=iHD" "$ENV_FILE" 2>/dev/null || \
+               ! sudo grep -q "MOZ_ENABLE_WAYLAND=1" "$ENV_FILE" 2>/dev/null; then
                 echo "Обновление $ENV_FILE..."
                 cat << EOF | sudo tee "$ENV_FILE" > /dev/null
 # Wayland Env Vars (mini-pc.sh)
@@ -361,7 +401,26 @@ EOF
 
         3) # Доп. оптимизация BTRFS
             print_header "3. Дополнительная оптимизация BTRFS (системный диск)"
-            if ! check_essentials "btrfs" "sysctl" "grep" "awk" "tee"; then continue; fi
+            
+            # Проверка и установка необходимых пакетов
+            required_pkgs=("btrfs-progs" "procps-ng" "coreutils" "grep" "gawk")
+            print_info "Проверка пакетов для работы с BTRFS..."
+            if ! check_and_install_packages "BTRFS оптимизация" "${required_pkgs[@]}"; then
+                print_error "Не удалось установить необходимые пакеты для оптимизации BTRFS."
+                read -p "Нажмите Enter для возврата в меню..." anykey
+                continue
+            fi
+            
+            # Проверка наличия команд после установки пакетов
+            required_cmds=("btrfs" "sysctl" "grep" "awk" "tee")
+            print_info "Проверка необходимых команд..."
+            if ! check_essentials "${required_cmds[@]}"; then
+                print_error "Необходимые команды не найдены даже после установки пакетов."
+                read -p "Нажмите Enter для возврата в меню..." anykey
+                continue
+            fi
+            
+            print_success "Все необходимые компоненты установлены."
             print_success "TRIM и базовые опции монтирования системного диска настроены установщиком."
             echo "Текущие опции монтирования '/': $(grep "[[:space:]]/[[:space:]]" /etc/fstab | awk '{print $4}')"
 
@@ -387,57 +446,191 @@ EOF
 
         4) # Форматирование второго SSD в Ext4
             print_header "4. Форматирование и монтирование второго SSD в Ext4 (/mnt/ssd)"
-            if ! check_essentials "parted" "mkfs.ext4" "wipefs" "sgdisk" "blkid" "lsblk" "mount" "umount" "chown" "basename" "awk" "grep" "sed"; then continue; fi
-            if ! check_and_install_packages "GVFS (для отображения диска)" "gvfs"; then continue; fi
+
+            # 1. Проверяем и устанавливаем необходимые пакеты
+            required_pkgs=("parted" "e2fsprogs" "gptfdisk" "util-linux" "gvfs" "coreutils")
+            print_info "Проверка и установка пакетов для форматирования..."
+            if ! check_and_install_packages "Утилиты для форматирования дисков" "${required_pkgs[@]}"; then
+                 print_error "Не удалось установить необходимые пакеты или установка отменена. Операция не может быть продолжена."
+                 read -p "Нажмите Enter для возврата в меню..." anykey
+                 continue
+            fi
+            print_success "Необходимые пакеты установлены или уже присутствуют."
+
+            # 2. Проверяем наличие необходимых команд
+            required_cmds=("parted" "mkfs.ext4" "wipefs" "sgdisk" "blkid" "lsblk" "mount" "umount" "chown" "basename" "awk" "grep" "sed" "findmnt" "realpath" "mkdir" "tee")
+            print_info "Проверка наличия необходимых команд..."
+            if ! check_essentials "${required_cmds[@]}"; then
+                print_error "Необходимые команды (${required_cmds[*]}) не найдены даже после установки пакетов. Проверьте \$PATH."
+                read -p "Нажмите Enter для возврата в меню..." anykey
+                continue
+            fi
+            print_success "Все необходимые команды на месте."
 
             print_warning "ВНИМАНИЕ! Все данные на выбранном диске будут БЕЗВОЗВРАТНО УНИЧТОЖЕНЫ!"
             echo "Текущие диски и разделы:"; lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
-            ROOT_DISK_BASE=$(basename "$ROOT_DEVICE" | sed 's/[0-9]*$//; s/p[0-9]*$//')
-            mapfile -t disk_options < <(lsblk -dpno NAME,SIZE,TYPE | grep 'disk' | grep -v "^/dev/${ROOT_DISK_BASE}" | awk '{print $1" ("$2")"}')
 
-            if [ ${#disk_options[@]} -eq 0 ]; then print_warning "Дополнительные диски (кроме системного) не найдены."; continue; fi
+            # Определение системного диска
+            ROOT_DEV_NODE=$(findmnt -no SOURCE /)
+            if [ -z "$ROOT_DEV_NODE" ]; then
+                print_error "Не удалось определить устройство корневой файловой системы с помощью findmnt."
+                read -p "Нажмите Enter для возврата в меню..." anykey
+                continue
+            fi
 
-            echo "Доступные диски для форматирования:"
-            disk_choice="" # Сбрасываем выбор
+            ROOT_REAL_PATH=$(realpath "$ROOT_DEV_NODE" 2>/dev/null)
+             if [ -z "$ROOT_REAL_PATH" ] || [ ! -b "$ROOT_REAL_PATH" ]; then
+                ROOT_REAL_PATH=$(realpath "$ROOT_DEVICE" 2>/dev/null)
+                if [ -z "$ROOT_REAL_PATH" ] || [ ! -b "$ROOT_REAL_PATH" ]; then
+                    print_error "Не удалось определить реальный путь к блочному устройству для корня ФС ($ROOT_DEV_NODE / $ROOT_DEVICE)."
+                    read -p "Нажмите Enter для возврата в меню..." anykey
+                    continue
+                fi
+            fi
+
+            ROOT_DISK_NAME=$(lsblk -no pkname "$ROOT_REAL_PATH")
+            if [ -z "$ROOT_DISK_NAME" ]; then
+                 ROOT_DISK_BASE_PATH=$(basename "$ROOT_DEVICE" | sed 's/[0-9]*$//; s/p[0-9]*$//')
+                 ROOT_DISK_NAME=$(basename "$ROOT_DISK_BASE_PATH")
+                 if [ -z "$ROOT_DISK_NAME" ]; then
+                      print_error "Не удалось определить имя родительского диска для корня ФС."
+                      read -p "Нажмите Enter для возврата в меню..." anykey
+                      continue
+                 fi
+                 print_warning "Использован резервный метод определения системного диска: /dev/$ROOT_DISK_NAME"
+            else
+                 print_info "Системный диск определен как: /dev/$ROOT_DISK_NAME"
+            fi
+
+            # Получение списка дисков для форматирования используя TRAN для определения физических дисков
+            print_info "Поиск физических дисков для форматирования..."
+            # Используем столбец TRAN для фильтрации только физических дисков (sata, nvme, usb, scsi)
+            mapfile -t disk_options < <(lsblk -dpno NAME,SIZE,TYPE,TRAN | grep 'disk' | grep -E 'sata|nvme|usb|scsi' | awk -v sys_disk="/dev/${ROOT_DISK_NAME}" '$1 != sys_disk {print $1" ("$2")"}')
+            mapfile_exit_code=$?
+            
+            if [ ${#disk_options[@]} -eq 0 ]; then
+                print_warning "Физические диски (кроме системного /dev/${ROOT_DISK_NAME}), подходящие для форматирования, не найдены."
+                read -p "Нажмите Enter для возврата в меню..." anykey
+                continue
+            fi
+
+            echo "Доступные физические диски для форматирования (системный /dev/${ROOT_DISK_NAME} исключен):"
+            disk_choice=""
             select opt in "${disk_options[@]}" "Отмена"; do
-                if [[ "$REPLY" == $((${#disk_options[@]} + 1)) ]]; then disk_choice="Отмена"; break
-                elif [[ "$REPLY" -ge 1 && "$REPLY" -le ${#disk_options[@]} ]]; then disk_choice="${disk_options[$REPLY-1]}"; second_disk=$(echo "$disk_choice" | awk '{print $1}'); print_info "Выбран диск: $second_disk"; break
-                else print_warning "Неверный выбор. Введите номер из списка."; fi
+                if [[ "$REPLY" == $((${#disk_options[@]} + 1)) ]]; then
+                    disk_choice="Отмена"
+                    break
+                elif [[ "$REPLY" -ge 1 && "$REPLY" -le ${#disk_options[@]} ]]; then
+                    disk_choice="${disk_options[$REPLY-1]}"
+                    second_disk=$(echo "$disk_choice" | awk '{print $1}')
+                    print_info "Выбран диск: $second_disk"
+                    break
+                else
+                    print_warning "Неверный выбор. Введите номер из списка."
+                fi
             done
-            if [ "$disk_choice" == "Отмена" ]; then print_warning "Операция отменена."; continue; fi
+
+            if [ "$disk_choice" == "Отмена" ]; then
+                print_warning "Операция отменена."
+                continue
+            fi
 
             if confirm "Точно форматировать $second_disk в Ext4 (метка 'SSD', точка /mnt/ssd)?"; then
-                if mount | grep -q "^$second_disk"; then print_warning "Размонтирование..."; if ! run_command "sudo umount ${second_disk}*"; then continue; fi; fi
+                if mount | grep -q "$second_disk"; then
+                    print_warning "Обнаружены смонтированные разделы на $second_disk. Попытка размонтирования..."
+                    mapfile -t mounts_to_umount < <(findmnt -nr -o TARGET --source "$second_disk")
+                    umount_failed=false
+                    if [ ${#mounts_to_umount[@]} -gt 0 ]; then
+                        print_info "Размонтирование: ${mounts_to_umount[*]}"
+                        for mp in "${mounts_to_umount[@]}"; do
+                            if ! run_command "sudo umount '$mp'"; then
+                                print_error "Не удалось размонтировать '$mp'"
+                                umount_failed=true
+                            fi
+                        done
+                    else
+                       print_info "Активных точек монтирования для $second_disk не найдено."
+                    fi
+                    if [ "$umount_failed" = true ]; then
+                         print_error "Не удалось размонтировать все разделы на $second_disk. Форматирование отменено."
+                         continue
+                    fi
+                fi
+
                 print_info "Очистка и разметка $second_disk..."
                 if ! run_command "sudo wipefs -af $second_disk" "critical"; then continue; fi
                 if ! run_command "sudo sgdisk --zap-all $second_disk" "critical"; then continue; fi
                 if ! run_command "sudo parted -s $second_disk mklabel gpt" "critical"; then continue; fi
                 if ! run_command "sudo parted -s -a optimal $second_disk mkpart primary ext4 0% 100%" "critical"; then continue; fi
-                sleep 2
-                new_partition_name=$(lsblk -lno NAME $second_disk | grep -E "${second_disk##*/}[p]?1$")
-                if [ -z "$new_partition_name" ]; then print_error "Не удалось определить имя раздела."; continue; fi
+
+                print_info "Определение нового раздела..."
+                sleep 5
+                new_partition_name=$(lsblk -lno NAME $second_disk | grep -E "${second_disk##*/}[p]?[0-9]+$" | head -n 1)
+
+                if [ -z "$new_partition_name" ]; then
+                    print_warning "Не удалось определить имя нового раздела стандартным методом, пробуем резервный..."
+                    new_partition_name=$(lsblk -lno NAME $second_disk | grep -v "${second_disk##*/}" | head -n 1)
+                     if [ -z "$new_partition_name" ]; then
+                          print_error "Резервный метод определения раздела тоже не сработал. Проверьте вывод 'lsblk $second_disk' вручную."
+                          continue
+                     fi
+                fi
+
                 new_partition="/dev/$new_partition_name"
-                if [ ! -b "$new_partition" ]; then print_error "'$new_partition' не блочное устройство."; continue; fi
+                if [ ! -b "$new_partition" ]; then
+                    print_error "Определенное имя раздела '$new_partition' не является блочным устройством."
+                    continue
+                fi
                 print_success "Создан раздел: $new_partition"
+
                 print_info "Форматирование $new_partition в Ext4 (метка 'SSD')..."
-                if ! run_command "sudo mkfs.ext4 -L SSD $new_partition" "critical"; then continue; fi
+                if ! run_command "sudo mkfs.ext4 -F -L SSD $new_partition" "critical"; then continue; fi
+
                 mount_point="/mnt/ssd"
+                print_info "Создание точки монтирования $mount_point..."
                 if ! run_command "sudo mkdir -p $mount_point"; then continue; fi
+
                 DATA_UUID=$(sudo blkid -s UUID -o value $new_partition)
-                if [ -z "$DATA_UUID" ]; then print_error "Не удалось получить UUID."; continue; fi
-                print_info "Добавление записи в /etc/fstab...";
-                if ! run_command "sudo cp /etc/fstab /etc/fstab.backup.$(date +%F_%T)"; then print_warning "Бэкап fstab не создан."; fi
+                if [ -z "$DATA_UUID" ]; then
+                    print_error "Не удалось получить UUID для раздела $new_partition."
+                    continue
+                fi
+                print_info "Добавление записи в /etc/fstab (UUID: $DATA_UUID)..."
+                if ! run_command "sudo cp /etc/fstab /etc/fstab.backup.$(date +%F_%T)"; then
+                    print_warning "Не удалось создать резервную копию /etc/fstab."
+                fi
                 sudo sed -i "/UUID=$DATA_UUID/d" /etc/fstab
                 fstab_line="UUID=$DATA_UUID  $mount_point  ext4  defaults,noatime,x-gvfs-show  0 2"
                 echo "# Второй SSD - (Ext4, SSD, /mnt/ssd, mini-pc.sh)" | sudo tee -a /etc/fstab > /dev/null
-                if ! echo "$fstab_line" | sudo tee -a /etc/fstab > /dev/null; then print_error "Запись в fstab не удалась."; continue; fi
+                if ! echo "$fstab_line" | sudo tee -a /etc/fstab > /dev/null; then
+                    print_error "Не удалось записать строку в /etc/fstab."
+                    continue
+                fi
                 print_success "Строка добавлена в fstab: $fstab_line"
+
+                print_info "Обновление конфигурации монтирования..."
                 if ! run_command "sudo systemctl daemon-reload"; then continue; fi
-                if ! run_command "sudo mount -a" "critical"; then print_warning "Не удалось смонтировать (проверьте 'sudo findmnt --verify')."; continue; fi
-                print_info "Установка прав доступа для $mount_point..."
-                if ! run_command "sudo chown $(whoami):$(whoami) $mount_point"; then print_warning "Не удалось сменить владельца $mount_point."; fi
-                print_success "Диск $second_disk отформатирован и примонтирован."
-            fi # Конец confirm
+                if ! run_command "sudo mount -a" "critical"; then
+                    print_error "Критическая ошибка при монтировании из fstab. Проверьте '/etc/fstab' и вывод 'sudo mount -a'."
+                    continue
+                fi
+
+                if findmnt --mountpoint "$mount_point" > /dev/null; then
+                    print_success "$mount_point успешно смонтирован."
+                    print_info "Установка прав доступа для $mount_point..."
+                    if ! run_command "sudo chown $(whoami):$(id -gn) $mount_point"; then
+                        print_warning "Не удалось сменить владельца $mount_point."
+                    else
+                         print_success "Владелец $mount_point изменен на $(whoami):$(id -gn)."
+                    fi
+                else
+                    print_error "$mount_point НЕ смонтирован после 'mount -a'. Неожиданная ошибка."
+                fi
+
+                print_success "Операция с диском $second_disk завершена."
+            else
+                print_info "Форматирование отменено пользователем."
+            fi
             ;;
 
         5) # Скрытие логов
@@ -464,7 +657,7 @@ EOF
                     echo "Создание директории $CMDLINE_DIR..."
                     if ! run_command "sudo mkdir -p $CMDLINE_DIR"; then
                         print_error "Не удалось создать директорию $CMDLINE_DIR."
-                        read -p "Нажмите Enter для продолжения..." temp
+                        read -p "Нажмите Enter для продолжения..." anykey
                         continue
                     fi
                 fi
@@ -492,7 +685,7 @@ EOF
                 
                 if [ ! -d "$ENTRIES_DIR" ]; then
                     print_error "Директория $ENTRIES_DIR не найдена. systemd-boot не настроен?"
-                    read -p "Нажмите Enter для продолжения..." temp
+                    read -p "Нажмите Enter для продолжения..." anykey
                     continue
                 fi
                 
@@ -500,7 +693,7 @@ EOF
                 conf_files=$(sudo find "$ENTRIES_DIR" -name "*.conf")
                 if [ -z "$conf_files" ]; then
                     print_error "Файлы конфигурации не найдены в $ENTRIES_DIR"
-                    read -p "Нажмите Enter для продолжения..." temp
+                    read -p "Нажмите Enter для продолжения..." anykey
                     continue
                 fi
                 
@@ -717,7 +910,7 @@ context.properties = {
 }
 EOF
                     print_success "$LOWLATENCY_CONF создан."
-                    print_warning "Перезапустите PipeWire/сеанс."
+                    print_warning "Перезапустите PipeWire/сеанс." 
                     echo "  systemctl --user restart pipewire pipewire-pulse wireplumber"
                 else 
                     print_error "Не удалось создать '$PW_CONF_DIR'."
