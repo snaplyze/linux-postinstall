@@ -792,19 +792,37 @@ EOF
 
         7) # Настройка Flathub
             print_header "7. Настройка Flathub и GNOME Software"
-            if ! check_command "flatpak"; then print_error "Команда flatpak не найдена."; continue; fi
-            if ! check_package "gnome-software"; then print_warning "Пакет gnome-software не найден."; fi
+            # Проверка наличия Flatpak
+            if ! check_command "flatpak"; then 
+                print_error "Команда flatpak не найдена."; 
+                continue; 
+            fi
+            # Проверка наличия gnome-software (опционально)
+            if ! check_package "gnome-software"; then 
+                print_warning "Пакет gnome-software не найден."; 
+            fi
             print_success "Flatpak установлен."
+            
+            # Добавление репозитория Flathub, если он ещё не добавлен
             if ! flatpak remote-list | grep -q flathub; then
-                print_info "Добавление Flathub..."; if ! run_command "flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo" "critical"; then continue; fi
-            else print_success "Flathub уже добавлен."; fi
-            echo "Проверка GNOME Platform Runtime..."; GNOME_PLATFORM_ID="org.gnome.Platform"
+                print_info "Добавление Flathub..."; 
+                if ! run_command "flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo" "critical"; then 
+                    continue; 
+                fi
+            else 
+                print_success "Flathub уже добавлен."; 
+            fi
+            
+            # Проверка и установка GNOME Platform Runtime
+            echo "Проверка GNOME Platform Runtime..."; 
+            GNOME_PLATFORM_ID="org.gnome.Platform"
             if ! flatpak list --runtime | grep -q "$GNOME_PLATFORM_ID"; then
                 print_info "Определение последней доступной версии GNOME Platform..."
-                # Получаем последнюю версию GNOME Platform Runtime
-                latest_gnome_version=$(flatpak remote-ls flathub --app --columns=ref | grep '^org.gnome.Platform/' | cut -d'/' -f3 | sort -V | tail -n 1)
                 
-                # Если версия не найдена, используем fallback
+                # Получение последней версии GNOME Platform с Flathub
+                latest_gnome_version=$(flatpak remote-ls flathub --columns=ref | grep '^org.gnome.Platform/' | cut -d'/' -f3 | sort -V | tail -n 1)
+                
+                # Fallback-версия, если определение не удалось
                 if [ -z "$latest_gnome_version" ]; then
                     latest_gnome_version="48"
                     print_warning "Не удалось определить доступные версии. Используем fallback: $latest_gnome_version"
@@ -812,12 +830,14 @@ EOF
                     print_success "Найдена последняя версия: $latest_gnome_version"
                 fi
                 
+                # Запрос на установку найденной версии
                 if confirm "Установить GNOME Platform $latest_gnome_version?"; then 
                     run_command "flatpak install -y flathub ${GNOME_PLATFORM_ID}//$latest_gnome_version"
                 fi
             else 
                 print_success "GNOME Platform Runtime уже установлен."
             fi
+            
             print_success "Настройка Flathub завершена."
             ;;
 
