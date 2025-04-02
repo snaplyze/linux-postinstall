@@ -70,29 +70,22 @@ select_components() {
         local option="$1"
         local var_name="$2"
         local already_installed="$3"
-        local status
         
         if [ "$already_installed" = true ]; then
-            print_color "green" "✓ $option (уже установлено)"
+            echo -e "\033[0;32m✓ $option (уже установлено)\033[0m"
             return 0
-        elif [ "${!var_name}" = true ]; then
-            status="✓"
-            color="green"
-        else
-            status="○"
-            color="yellow"
         fi
         
-        if [ "$color" = "green" ]; then
-            echo -ne "\033[0;32m$status \033[0m$option (y/n): "
+        if [ "${!var_name}" = true ]; then
+            echo -ne "\033[0;32m✓\033[0m $option (y/n): "
         else
-            echo -ne "\033[0;33m$status \033[0m$option (y/n): "
+            echo -ne "\033[0;33m○\033[0m $option (y/n): "
         fi
         
         read choice
         if [[ "$choice" == "y" || "$choice" == "Y" ]]; then
             eval "$var_name=true"
-            print_color "green" "  ✓ Выбрано"
+            echo -e "  \033[0;32m✓ Выбрано\033[0m"
             return 0
         else
             eval "$var_name=false"
@@ -112,7 +105,7 @@ select_components() {
     time_diff=$((current_time - apt_update_time))
     if [ $time_diff -lt 86400 ]; then
         sys_updated=true
-        print_color "green" "✓ Обновление системы (выполнено менее 24 часов назад)"
+        echo -e "\033[0;32m✓ Обновление системы (выполнено менее 24 часов назад)\033[0m"
     else
         sys_updated=false
         select_option "Обновление системы" "UPDATE_SYSTEM" "$sys_updated"
@@ -127,7 +120,7 @@ select_components() {
     done
     
     if [ "$base_utils_installed" = true ]; then
-        print_color "green" "✓ Базовые утилиты (уже установлены)"
+        echo -e "\033[0;32m✓ Базовые утилиты (уже установлены)\033[0m"
     else
         select_option "Базовые утилиты" "INSTALL_BASE_UTILS" "$base_utils_installed"
     fi
@@ -142,7 +135,7 @@ select_components() {
     
     if grep -q "prohibit-password" /etc/ssh/sshd_config || grep -q "prohibit-password" /etc/ssh/sshd_config.d/secure.conf 2>/dev/null; then
         ssh_configured=true
-        print_color "green" "✓ Настройка SSH (уже настроено)"
+        echo -e "\033[0;32m✓ Настройка SSH (уже настроено)\033[0m"
     else
         ssh_configured=false
         select_option "Настройка SSH" "SETUP_SSH" "$ssh_configured"
@@ -150,7 +143,7 @@ select_components() {
     
     if is_installed fail2ban && systemctl is-active --quiet fail2ban; then
         fail2ban_configured=true
-        print_color "green" "✓ Настройка Fail2ban (уже настроено)"
+        echo -e "\033[0;32m✓ Настройка Fail2ban (уже настроено)\033[0m"
     else
         fail2ban_configured=false
         select_option "Настройка Fail2ban" "SETUP_FAIL2BAN" "$fail2ban_configured"
@@ -158,7 +151,7 @@ select_components() {
     
     if is_installed ufw && systemctl is-active --quiet ufw; then
         firewall_configured=true
-        print_color "green" "✓ Настройка Firewall (UFW) (уже настроено)"
+        echo -e "\033[0;32m✓ Настройка Firewall (UFW) (уже настроено)\033[0m"
     else
         firewall_configured=false
         select_option "Настройка Firewall (UFW)" "SETUP_FIREWALL" "$firewall_configured"
@@ -166,7 +159,7 @@ select_components() {
     
     if grep -q "tcp_congestion_control=bbr" /etc/sysctl.conf; then
         bbr_configured=true
-        print_color "green" "✓ Включение TCP BBR (уже настроено)"
+        echo -e "\033[0;32m✓ Включение TCP BBR (уже настроено)\033[0m"
     else
         bbr_configured=false
         select_option "Включение TCP BBR" "SETUP_BBR" "$bbr_configured"
@@ -174,7 +167,7 @@ select_components() {
     
     if grep -q "tcp_fastopen=3" /etc/sysctl.conf; then
         system_optimized=true
-        print_color "green" "✓ Оптимизация производительности системы (уже настроено)"
+        echo -e "\033[0;32m✓ Оптимизация производительности системы (уже настроено)\033[0m"
     else
         system_optimized=false
         select_option "Оптимизация производительности системы" "OPTIMIZE_SYSTEM" "$system_optimized"
@@ -182,7 +175,7 @@ select_components() {
     
     if [ -f /swapfile ] && grep -q "/swapfile" /etc/fstab; then
         swap_configured=true
-        print_color "green" "✓ Настройка swap (уже настроено)"
+        echo -e "\033[0;32m✓ Настройка swap (уже настроено)\033[0m"
     else
         swap_configured=false
         select_option "Настройка swap (50% от ОЗУ)" "SETUP_SWAP" "$swap_configured"
@@ -190,7 +183,7 @@ select_components() {
     
     if is_installed systemd-timesyncd && systemctl is-active --quiet systemd-timesyncd; then
         ntp_configured=true
-        print_color "green" "✓ NTP синхронизация (уже настроено)"
+        echo -e "\033[0;32m✓ NTP синхронизация (уже настроено)\033[0m"
     else
         ntp_configured=false
         select_option "NTP синхронизация" "SETUP_NTP" "$ntp_configured"
@@ -198,7 +191,7 @@ select_components() {
     
     if [ -f /etc/logrotate.d/custom ]; then
         logrotate_configured=true
-        print_color "green" "✓ Настройка logrotate (уже настроено)"
+        echo -e "\033[0;32m✓ Настройка logrotate (уже настроено)\033[0m"
     else
         logrotate_configured=false
         select_option "Настройка logrotate" "SETUP_LOGROTATE" "$logrotate_configured"
@@ -206,7 +199,7 @@ select_components() {
     
     if is_installed unattended-upgrades && [ -f /etc/apt/apt.conf.d/50unattended-upgrades ]; then
         auto_updates_configured=true
-        print_color "green" "✓ Автоматические обновления безопасности (уже настроено)"
+        echo -e "\033[0;32m✓ Автоматические обновления безопасности (уже настроено)\033[0m"
     else
         auto_updates_configured=false
         select_option "Автоматические обновления безопасности" "SETUP_AUTO_UPDATES" "$auto_updates_configured"
@@ -221,7 +214,7 @@ select_components() {
     done
     
     if [ "$monitoring_installed" = true ]; then
-        print_color "green" "✓ Инструменты мониторинга (уже установлены)"
+        echo -e "\033[0;32m✓ Инструменты мониторинга (уже установлены)\033[0m"
     else
         select_option "Инструменты мониторинга" "INSTALL_MONITORING" "$monitoring_installed"
     fi
@@ -229,7 +222,7 @@ select_components() {
     docker_installed=false
     if is_installed docker-ce && is_installed docker-compose-plugin; then
         docker_installed=true
-        print_color "green" "✓ Docker и Docker Compose (уже установлены)"
+        echo -e "\033[0;32m✓ Docker и Docker Compose (уже установлены)\033[0m"
     else
         select_option "Docker и Docker Compose" "INSTALL_DOCKER" "$docker_installed"
     fi
@@ -238,7 +231,7 @@ select_components() {
     current_timezone=$(timedatectl show --property=Timezone --value)
     if [ -n "$current_timezone" ]; then
         timezone_set=true
-        print_color "green" "✓ Часовой пояс (текущий: $current_timezone)"
+        echo -e "\033[0;32m✓ Часовой пояс (текущий: $current_timezone)\033[0m"
     else
         select_option "Настройка часового пояса" "SETUP_TIMEZONE" "$timezone_set"
     fi
@@ -247,7 +240,7 @@ select_components() {
     locales_set=false
     if locale -a 2>/dev/null | grep -q "ru_RU.utf8"; then
         locales_set=true
-        print_color "green" "✓ Настройка локалей (уже настроены)"
+        echo -e "\033[0;32m✓ Настройка локалей (уже настроены)\033[0m"
     else
         select_option "Настройка локалей (включая русскую)" "SETUP_LOCALES" "$locales_set"
     fi
