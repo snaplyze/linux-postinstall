@@ -801,7 +801,7 @@ EOF
             echo "Проверка GNOME Platform Runtime..."; GNOME_PLATFORM_ID="org.gnome.Platform"
             if ! flatpak list --runtime | grep -q "$GNOME_PLATFORM_ID"; then
                 echo "Определение версии..."; latest_gnome_version=$(flatpak remote-info --log flathub $GNOME_PLATFORM_ID 2>/dev/null | grep -oP "Version: \K[0-9\.]+" | sort -V | tail -n 1)
-                if [ -z "$latest_gnome_version" ]; then latest_gnome_version="46"; print_warning "Используем v$latest_gnome_version"; else print_success "Версия: $latest_gnome_version"; fi
+                if [ -z "$latest_gnome_version" ]; then latest_gnome_version="48"; print_warning "Используем v$latest_gnome_version"; else print_success "Версия: $latest_gnome_version"; fi
                 if confirm "Установить GNOME Platform $latest_gnome_version?"; then run_command "flatpak install -y flathub ${GNOME_PLATFORM_ID}//$latest_gnome_version"; fi
             else print_success "GNOME Platform Runtime уже установлен."; fi
             print_success "Настройка Flathub завершена."
