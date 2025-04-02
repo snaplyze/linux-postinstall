@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # mini-pc-arch-setup.sh - Оптимизированный скрипт настройки Arch Linux для мини-ПК
-# Версия: 1.9.1 (Исправлены синтаксические проблемы и улучшена совместимость)
+# Версия: 1.9.2 (Улучшено определение версии GNOME Platform)
 # Цель: Дополнительная настройка системы, установленной с помощью installer.sh
 
 # ==============================================================================
@@ -800,23 +800,15 @@ EOF
             else print_success "Flathub уже добавлен."; fi
             echo "Проверка GNOME Platform Runtime..."; GNOME_PLATFORM_ID="org.gnome.Platform"
             if ! flatpak list --runtime | grep -q "$GNOME_PLATFORM_ID"; then
-                print_info "Проверка доступных версий GNOME Platform..."
-                # Попытка определить доступные версии
-                available_versions=$(flatpak remote-info flathub $GNOME_PLATFORM_ID --show-metadata 2>/dev/null | grep -oP "Version=\K[0-9\.]+" || echo "")
+                print_info "Определение последней доступной версии GNOME Platform..."
+                # Получаем последнюю версию GNOME Platform Runtime
+                latest_gnome_version=$(flatpak remote-ls flathub --app --columns=ref | grep '^org.gnome.Platform/' | cut -d'/' -f3 | sort -V | tail -n 1)
                 
-                # Если не удалось получить версии, пробуем альтернативный метод
-                if [ -z "$available_versions" ]; then
-                    print_info "Попытка получить версии другим способом..."
-                    available_versions=$(flatpak remote-info --log flathub $GNOME_PLATFORM_ID 2>/dev/null | grep -oP "Version: \K[0-9\.]+" || echo "")
-                fi
-                
-                # Если оба метода не сработали, используем известную актуальную версию
-                if [ -z "$available_versions" ]; then
+                # Если версия не найдена, используем fallback
+                if [ -z "$latest_gnome_version" ]; then
                     latest_gnome_version="48"
-                    print_warning "Не удалось определить доступные версии. Используем последнюю известную: $latest_gnome_version"
+                    print_warning "Не удалось определить доступные версии. Используем fallback: $latest_gnome_version"
                 else
-                    # Сортируем версии и берем последнюю (наибольшую)
-                    latest_gnome_version=$(echo "$available_versions" | sort -V | tail -n 1)
                     print_success "Найдена последняя версия: $latest_gnome_version"
                 fi
                 
