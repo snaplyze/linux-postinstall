@@ -41,6 +41,7 @@ SETUP_SSH=false
 SETUP_FAIL2BAN=false
 SETUP_FIREWALL=false
 SETUP_BBR=false
+INSTALL_XANMOD=false
 OPTIMIZE_SYSTEM=false
 SETUP_TIMEZONE=false
 SETUP_NTP=false
@@ -163,6 +164,15 @@ select_components() {
     else
         bbr_configured=false
         select_option "Включение TCP BBR" "SETUP_BBR" "$bbr_configured"
+    fi
+    
+    # Проверка установки XanMod ядра
+    if uname -r | grep -q "xanmod"; then
+        xanmod_installed=true
+        echo -e "\033[0;32m✓ Ядро XanMod (уже установлено: $(uname -r))\033[0m"
+    else
+        xanmod_installed=false
+        select_option "Установка оптимизированного ядра XanMod" "INSTALL_XANMOD" "$xanmod_installed"
     fi
     
     if grep -q "tcp_fastopen=3" /etc/sysctl.conf; then
@@ -514,6 +524,99 @@ EOF
 
         # Применение изменений sysctl
         sysctl -p
+    fi
+fi
+
+# 7.1 Установка оптимизированного ядра XanMod
+if [ "$INSTALL_XANMOD" = true ]; then
+    step "Установка оптимизированного ядра XanMod"
+    
+    # Проверяем текущую версию ядра
+    current_kernel=$(uname -r)
+    echo "Текущее ядро: $current_kernel"
+    
+    # Создаем каталог для ключей, если он не существует
+    mkdir -p /etc/apt/keyrings
+    
+    # Загружаем и импортируем ключ XanMod
+    wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor -vo /etc/apt/keyrings/xanmod-archive-keyring.gpg
+    
+    # Добавляем репозиторий XanMod
+    echo 'deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' | tee /etc/apt/sources.list.d/xanmod-release.list
+    
+    # Обновляем информацию о репозиториях
+    apt update
+    
+    # Определяем наиболее оптимальную версию ядра для процессора
+    echo "Определение оптимальной версии ядра XanMod для вашего процессора..."
+    
+    if grep -q 'avx512' /proc/cpuinfo; then
+        # Для процессоров с поддержкой AVX512 (новейшие процессоры Intel/AMD)
+        kernel_variant="x64v4"
+        kernel_description="XanMod x64v4 - для новейших процессоров с поддержкой AVX512 (Intel Icelake/AMD Zen3 и новее)"
+    elif grep -q 'avx2' /proc/cpuinfo; then
+        # Для процессоров с поддержкой AVX2 (большинство современных процессоров)
+        kernel_variant="x64v3"
+        kernel_description="XanMod x64v3 - для современных процессоров с поддержкой AVX2 (Intel Haswell/AMD Excavator и новее)"
+    elif grep -q 'avx' /proc/cpuinfo; then
+        # Для процессоров с поддержкой AVX (Intel Sandy Bridge и новее)
+        kernel_variant="x64v2"
+        kernel_description="XanMod x64v2 - для процессоров с поддержкой AVX (Intel Sandy Bridge/AMD Bulldozer и новее)"
+    else
+        # Для старых процессоров
+        kernel_variant="x64v1"
+        kernel_description="XanMod x64v1 - базовая версия для любых 64-битных процессоров"
+    fi
+    
+    print_color "green" "╔═════════════════════════════════════════════════════════════╗"
+    print_color "green" "║             ИНФОРМАЦИЯ О ВЫБРАННОМ ЯДРЕ                     ║"
+    print_color "green" "╚═════════════════════════════════════════════════════════════╝"
+    print_color "yellow" "→ Выбрана версия: $kernel_description"
+    print_color "yellow" "→ Пакет: linux-xanmod-$kernel_variant"
+    print_color "yellow" "→ Особенности: улучшенная производительность, низкие задержки, оптимизации для серверов"
+    echo
+    
+    # Устанавливаем ядро XanMod
+    print_color "blue" "Установка ядра linux-xanmod-$kernel_variant..."
+    apt install -y linux-xanmod-$kernel_variant
+    
+    # Проверка успешности установки
+    if [ $? -eq 0 ]; then
+        print_color "green" "✓ Ядро XanMod успешно установлено"
+        # Получаем информацию о установленной версии
+        xanmod_version=$(apt-cache policy linux-xanmod-$kernel_variant | grep Installed | awk '{print $2}')
+        print_color "green" "✓ Установленная версия: $xanmod_version"
+        print_color "yellow" "⚠ Для применения нового ядра потребуется перезагрузка системы"
+        xanmod_installed=true
+    else
+        print_color "red" "✗ Ошибка при установке ядра XanMod"
+        print_color "yellow" "⚠ Пробуем установить стандартную версию ядра XanMod"
+        
+        # Пробуем установить стандартную версию
+        apt install -y linux-xanmod
+        
+        if [ $? -eq 0 ]; then
+            print_color "green" "✓ Стандартное ядро XanMod успешно установлено"
+            xanmod_version=$(apt-cache policy linux-xanmod | grep Installed | awk '{print $2}')
+            print_color "green" "✓ Установленная версия: $xanmod_version"
+            print_color "yellow" "⚠ Для применения нового ядра потребуется перезагрузка системы"
+            xanmod_installed=true
+        else
+            print_color "red" "✗ Не удалось установить ядро XanMod. Продолжаем настройку с текущим ядром."
+        fi
+    fi
+    
+    # Проверяем, установлен ли пакет inxi для системной информации
+    if ! is_installed inxi; then
+        apt install -y inxi
+    fi
+    
+    if [ "$xanmod_installed" = true ]; then
+        echo
+        print_color "blue" "После перезагрузки можно проверить информацию о ядре следующими командами:"
+        print_color "yellow" "  uname -r       # Версия ядра"
+        print_color "yellow" "  inxi -S        # Краткая информация о системе"
+        print_color "yellow" "  inxi -Fxxxz    # Подробная информация о системе и ядре"
     fi
 fi
 
@@ -902,6 +1005,18 @@ fi
 if [ "$CHANGE_HOSTNAME" = true ]; then
     echo -e "\n\033[1;33mИмя хоста изменено на: $(hostname)\033[0m"
     echo -e "\033[1;33mИзменение имени хоста будет полностью применено после перезагрузки.\033[0m"
+fi
+
+if [ "$INSTALL_XANMOD" = true ] && [ "$xanmod_installed" = true ]; then
+    echo -e "\n\033[1;33mЯдро XanMod установлено. Для его активации требуется перезагрузка.\033[0m"
+    kernel_info="$(apt-cache policy linux-xanmod-*${kernel_variant}* 2>/dev/null | grep Installed | head -1 | awk '{print $2}')"
+    if [ -z "$kernel_info" ]; then
+        kernel_info="$(apt-cache policy linux-xanmod 2>/dev/null | grep Installed | head -1 | awk '{print $2}')"
+    fi
+    if [ -n "$kernel_info" ]; then
+        echo -e "\033[1;33mУстановленная версия: $kernel_info (тип: $kernel_variant)\033[0m"
+    fi
+    echo -e "\033[1;33mПосле перезагрузки можно проверить версию ядра командой: uname -r\033[0m"
 fi
 
 if [ "$SECURE_SSH" = true ]; then
