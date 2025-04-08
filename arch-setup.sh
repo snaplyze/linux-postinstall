@@ -448,12 +448,12 @@ CombinedUpgrade
 BuildDir = ~/.cache/paru/clone
 CloneDir = ~/.cache/paru/clone
 PgpFetch
-DevelSuffix = -git
-
-[bin]
-FileManager = nnn
-MFlags = --noconfirm
-EOF
+ DevelSuffix = -git
+ 
+ [bin]
+ #FileManager = nnn
+ MFlags = --noconfirm
+ EOF
                      print_success "Файл конфигурации Paru создан/обновлен."
                 fi
             fi
@@ -1015,20 +1015,3 @@ done
 
 print_success "Работа скрипта завершена."
 exit 0
-</final_file_content>
-
-IMPORTANT: For any future changes to this file, use the final_file_content shown above as your reference. This content reflects the current state of the file, including any auto-formatting (e.g., if you used single quotes but the formatter converted them to double quotes). Always base your SEARCH/REPLACE operations on this final version to ensure accuracy.
-
-<environment_details>
-# VSCode Visible Files
-arch-setup.sh
-
-# VSCode Open Tabs
-arch-setup.sh
-
-# Current Time
-08.04.2025, 9:05:40 PM (Europe/Moscow, UTC+3:00)
-
-# Current Mode
-ACT MODE
-</environment_details>
