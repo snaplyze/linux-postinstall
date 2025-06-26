@@ -552,8 +552,9 @@ if [ "$INSTALL_XANMOD" = true ]; then
     
     if grep -q 'avx512' /proc/cpuinfo; then
         # Для процессоров с поддержкой AVX512 (новейшие процессоры Intel/AMD)
-        kernel_variant="x64v4"
-        kernel_description="XanMod x64v4 - для новейших процессоров с поддержкой AVX512 (Intel Icelake/AMD Zen3 и новее)"
+        # ВАЖНО: Пакета linux-xanmod-x64v4 не существует, для AVX-512 используем x64v3
+        kernel_variant="x64v3"
+        kernel_description="XanMod x64v3 (AVX-512) - для новейших процессоров с поддержкой AVX512 (Intel Icelake/AMD Zen3 и новее)"
     elif grep -q 'avx2' /proc/cpuinfo; then
         # Для процессоров с поддержкой AVX2 (большинство современных процессоров)
         kernel_variant="x64v3"
@@ -968,6 +969,145 @@ EOF
         echo "SSH сервер перезапущен с новыми настройками безопасности."
         print_color "green" "Теперь вы можете подключаться только по SSH ключу."
     fi
+fi
+
+# 18. Полная настройка fish shell для root и пользователя (по примеру snaplyze/debian-wsl)
+step "Полная настройка fish shell (Fisher, плагины, fzf, fd, bat, Starship, автодополнения Docker)"
+
+# Установка дополнительных утилит
+apt install -y fzf fd-find bat
+
+# --- Настройка для root ---
+# Создание директорий для конфигурации
+mkdir -p /root/.config/fish/functions
+mkdir -p /root/.config/fish/completions
+
+# Основной config.fish для root
+cat > /root/.config/fish/config.fish << EOF
+# Настройки WSL Debian
+set -gx LANG ru_RU.UTF-8
+set -gx LC_ALL ru_RU.UTF-8
+
+# Алиасы
+alias ll='ls -la'
+alias la='ls -A'
+alias l='ls'
+alias cls='clear'
+alias ..='cd ..'
+alias ...='cd ../..'
+
+# Улучшенные утилиты
+if type -q batcat
+    alias cat='batcat --paging=never'
+end
+if type -q fd
+    alias find='fd'
+end
+
+# Настройка fish
+set -U fish_greeting
+set fish_key_bindings fish_default_key_bindings
+set fish_autosuggestion_enabled 1
+
+# FZF интеграция
+set -gx FZF_DEFAULT_COMMAND 'fd --type f --strip-cwd-prefix 2>/dev/null || find . -type f'
+set -gx FZF_CTRL_T_COMMAND $FZF_DEFAULT_COMMAND
+
+# Starship prompt
+starship init fish | source
+EOF
+
+# Приветствие для root
+cat > /root/.config/fish/functions/fish_greeting.fish << EOF
+function fish_greeting
+    echo "🐧 WSL Debian [ROOT] - (date '+%Y-%m-%d %H:%M')"
+end
+EOF
+
+# Автодополнения Docker для root
+mkdir -p /root/.config/fish/completions
+curl -sL https://raw.githubusercontent.com/docker/cli/master/contrib/completion/fish/docker.fish -o /root/.config/fish/completions/docker.fish
+curl -sL https://raw.githubusercontent.com/docker/compose/master/contrib/completion/fish/docker-compose.fish -o /root/.config/fish/completions/docker-compose.fish
+
+# Установка Fisher и плагинов для root
+su - root -c "fish -c 'curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher'"
+su - root -c "fish -c 'fisher install jethrokuan/z'"
+su - root -c "fish -c 'fisher install PatrickF1/fzf.fish'"
+su - root -c "fish -c 'fisher install jorgebucaran/autopair.fish'"
+su - root -c "fish -c 'fisher install franciscolourenco/done'"
+su - root -c "fish -c 'fisher install edc/bass'"
+
+# Установка Starship для root
+su - root -c "curl -sS https://starship.rs/install.sh | sh -s -- -y"
+
+# Установка fish по умолчанию для root
+chsh -s /usr/bin/fish root
+
+# --- Настройка для нового пользователя ---
+if [ "$CREATE_USER" = true ] && [ -n "$new_username" ]; then
+    # Создание директорий
+    su - $new_username -c "mkdir -p ~/.config/fish/functions"
+    su - $new_username -c "mkdir -p ~/.config/fish/completions"
+
+    # Основной config.fish для пользователя
+    su - $new_username -c "cat > ~/.config/fish/config.fish << EOF
+# Настройки WSL Debian
+set -gx LANG ru_RU.UTF-8
+set -gx LC_ALL ru_RU.UTF-8
+
+# Алиасы
+alias ll='ls -la'
+alias la='ls -A'
+alias l='ls'
+alias cls='clear'
+alias ..='cd ..'
+alias ...='cd ../..'
+
+# Улучшенные утилиты
+if type -q batcat
+    alias cat='batcat --paging=never'
+end
+if type -q fd
+    alias find='fd'
+end
+
+# Настройка fish
+set -U fish_greeting
+set fish_key_bindings fish_default_key_bindings
+set fish_autosuggestion_enabled 1
+
+# FZF интеграция
+set -gx FZF_DEFAULT_COMMAND 'fd --type f --strip-cwd-prefix 2>/dev/null || find . -type f'
+set -gx FZF_CTRL_T_COMMAND $FZF_DEFAULT_COMMAND
+
+# Starship prompt
+starship init fish | source
+EOF"
+
+    # Приветствие для пользователя
+    su - $new_username -c "cat > ~/.config/fish/functions/fish_greeting.fish << EOF
+function fish_greeting
+    echo \"🐧 WSL Debian - (date '+%Y-%m-%d %H:%M')\"
+end
+EOF"
+
+    # Автодополнения Docker для пользователя
+    su - $new_username -c "curl -sL https://raw.githubusercontent.com/docker/cli/master/contrib/completion/fish/docker.fish -o ~/.config/fish/completions/docker.fish"
+    su - $new_username -c "curl -sL https://raw.githubusercontent.com/docker/compose/master/contrib/completion/fish/docker-compose.fish -o ~/.config/fish/completions/docker-compose.fish"
+
+    # Установка Fisher и плагинов для пользователя
+    su - $new_username -c "fish -c 'curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher'"
+    su - $new_username -c "fish -c 'fisher install jethrokuan/z'"
+    su - $new_username -c "fish -c 'fisher install PatrickF1/fzf.fish'"
+    su - $new_username -c "fish -c 'fisher install jorgebucaran/autopair.fish'"
+    su - $new_username -c "fish -c 'fisher install franciscolourenco/done'"
+    su - $new_username -c "fish -c 'fisher install edc/bass'"
+
+    # Установка Starship для пользователя
+    su - $new_username -c "curl -sS https://starship.rs/install.sh | sh -s -- -y"
+
+    # Установка fish по умолчанию для пользователя
+    chsh -s /usr/bin/fish $new_username
 fi
 
 # Очистка временных файлов
