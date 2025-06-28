@@ -988,74 +988,7 @@ if [ "$INSTALL_FISH" = true ]; then
     mkdir -p /root/.config/fish/completions
 
     # Основной config.fish для root
-    cat > /root/.config/fish/config.fish << EOF
-    # Настройки WSL Debian
-    set -gx LANG ru_RU.UTF-8
-    set -gx LC_ALL ru_RU.UTF-8
-
-    # Алиасы
-    alias ll='ls -la'
-    alias la='ls -A'
-    alias l='ls'
-    alias cls='clear'
-    alias ..='cd ..'
-    alias ...='cd ../..'
-
-    # Улучшенные утилиты
-    if type -q batcat
-        alias cat='batcat --paging=never'
-    end
-    if type -q fd
-        alias find='fd'
-    end
-
-    # Настройка fish
-    set -U fish_greeting
-    set fish_key_bindings fish_default_key_bindings
-    set fish_autosuggestion_enabled 1
-
-    # FZF интеграция
-    set -gx FZF_DEFAULT_COMMAND 'fd --type f --strip-cwd-prefix 2>/dev/null || find . -type f'
-    set -gx FZF_CTRL_T_COMMAND $FZF_DEFAULT_COMMAND
-
-    # Starship prompt
-    starship init fish | source
-    EOF
-
-    # Приветствие для root
-    cat > /root/.config/fish/functions/fish_greeting.fish << EOF
-    function fish_greeting
-        echo "🐧 WSL Debian [ROOT] - (date '+%Y-%m-%d %H:%M')"
-    end
-    EOF
-
-    # Автодополнения Docker для root
-    mkdir -p /root/.config/fish/completions
-    curl -sL https://raw.githubusercontent.com/docker/cli/master/contrib/completion/fish/docker.fish -o /root/.config/fish/completions/docker.fish
-    curl -sL https://raw.githubusercontent.com/docker/compose/master/contrib/completion/fish/docker-compose.fish -o /root/.config/fish/completions/docker-compose.fish
-
-    # Установка Fisher и плагинов для root
-    su - root -c "fish -c 'curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher'"
-    su - root -c "fish -c 'fisher install jethrokuan/z'"
-    su - root -c "fish -c 'fisher install PatrickF1/fzf.fish'"
-    su - root -c "fish -c 'fisher install jorgebucaran/autopair.fish'"
-    su - root -c "fish -c 'fisher install franciscolourenco/done'"
-    su - root -c "fish -c 'fisher install edc/bass'"
-
-    # Установка Starship для root
-    su - root -c "curl -sS https://starship.rs/install.sh | sh -s -- -y"
-
-    # Установка fish по умолчанию для root
-    chsh -s /usr/bin/fish root
-
-    # --- Настройка для нового пользователя ---
-    if [ "$CREATE_USER" = true ] && [ -n "$new_username" ]; then
-        # Создание директорий
-        su - $new_username -c "mkdir -p ~/.config/fish/functions"
-        su - $new_username -c "mkdir -p ~/.config/fish/completions"
-
-        # Основной config.fish для пользователя
-        su - $new_username -c "cat > ~/.config/fish/config.fish << EOF
+    cat > /root/.config/fish/config.fish << 'ROOT_CONFIG_EOF'
 # Настройки WSL Debian
 set -gx LANG ru_RU.UTF-8
 set -gx LC_ALL ru_RU.UTF-8
@@ -1087,14 +1020,88 @@ set -gx FZF_CTRL_T_COMMAND $FZF_DEFAULT_COMMAND
 
 # Starship prompt
 starship init fish | source
-EOF"
+ROOT_CONFIG_EOF
 
-        # Приветствие для пользователя
-        su - $new_username -c "cat > ~/.config/fish/functions/fish_greeting.fish << EOF
+    # Приветствие для root
+    cat > /root/.config/fish/functions/fish_greeting.fish << 'ROOT_GREETING_EOF'
 function fish_greeting
-    echo \"🐧 WSL Debian - (date '+%Y-%m-%d %H:%M')\"
+    echo "🐧 WSL Debian [ROOT] - (date '+%Y-%m-%d %H:%M')"
 end
-EOF"
+ROOT_GREETING_EOF
+
+    # Автодополнения Docker для root
+    mkdir -p /root/.config/fish/completions
+    curl -sL https://raw.githubusercontent.com/docker/cli/master/contrib/completion/fish/docker.fish -o /root/.config/fish/completions/docker.fish
+    curl -sL https://raw.githubusercontent.com/docker/compose/master/contrib/completion/fish/docker-compose.fish -o /root/.config/fish/completions/docker-compose.fish
+
+    # Установка Fisher и плагинов для root
+    su - root -c "fish -c 'curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher'"
+    su - root -c "fish -c 'fisher install jethrokuan/z'"
+    su - root -c "fish -c 'fisher install PatrickF1/fzf.fish'"
+    su - root -c "fish -c 'fisher install jorgebucaran/autopair.fish'"
+    su - root -c "fish -c 'fisher install franciscolourenco/done'"
+    su - root -c "fish -c 'fisher install edc/bass'"
+
+    # Установка Starship для root
+    su - root -c "curl -sS https://starship.rs/install.sh | sh -s -- -y"
+
+    # Установка fish по умолчанию для root
+    chsh -s /usr/bin/fish root
+
+    # --- Настройка для нового пользователя ---
+    if [ "$CREATE_USER" = true ] && [ -n "$new_username" ]; then
+        # Создание директорий
+        su - $new_username -c "mkdir -p ~/.config/fish/functions"
+        su - $new_username -c "mkdir -p ~/.config/fish/completions"
+
+        # Создаем временные файлы для конфигурации пользователя
+        cat > /tmp/user_config.fish << 'USER_CONFIG_EOF'
+# Настройки WSL Debian
+set -gx LANG ru_RU.UTF-8
+set -gx LC_ALL ru_RU.UTF-8
+
+# Алиасы
+alias ll='ls -la'
+alias la='ls -A'
+alias l='ls'
+alias cls='clear'
+alias ..='cd ..'
+alias ...='cd ../..'
+
+# Улучшенные утилиты
+if type -q batcat
+    alias cat='batcat --paging=never'
+end
+if type -q fd
+    alias find='fd'
+end
+
+# Настройка fish
+set -U fish_greeting
+set fish_key_bindings fish_default_key_bindings
+set fish_autosuggestion_enabled 1
+
+# FZF интеграция
+set -gx FZF_DEFAULT_COMMAND 'fd --type f --strip-cwd-prefix 2>/dev/null || find . -type f'
+set -gx FZF_CTRL_T_COMMAND $FZF_DEFAULT_COMMAND
+
+# Starship prompt
+starship init fish | source
+USER_CONFIG_EOF
+
+        cat > /tmp/user_greeting.fish << 'USER_GREETING_EOF'
+function fish_greeting
+    echo "🐧 WSL Debian - (date '+%Y-%m-%d %H:%M')"
+end
+USER_GREETING_EOF
+
+        # Копируем файлы конфигурации для пользователя
+        cp /tmp/user_config.fish /home/$new_username/.config/fish/config.fish
+        cp /tmp/user_greeting.fish /home/$new_username/.config/fish/functions/fish_greeting.fish
+        chown -R $new_username:$new_username /home/$new_username/.config/fish
+
+        # Очищаем временные файлы
+        rm -f /tmp/user_config.fish /tmp/user_greeting.fish
 
         # Автодополнения Docker для пользователя
         su - $new_username -c "curl -sL https://raw.githubusercontent.com/docker/cli/master/contrib/completion/fish/docker.fish -o ~/.config/fish/completions/docker.fish"
