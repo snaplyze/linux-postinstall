@@ -979,8 +979,12 @@ fi
 if [ "$INSTALL_FISH" = true ]; then
     step "Полная настройка fish shell (Fisher, плагины, fzf, fd, bat, Starship, автодополнения Docker)"
 
-    # Установка дополнительных утилит
-    apt install -y fzf fd-find bat
+    # Установка fish shell и дополнительных утилит
+    apt install -y fish fzf fd-find bat
+
+    # Установка Starship глобально (для всех пользователей)
+    step "Установка Starship prompt"
+    curl -sS https://starship.rs/install.sh | sh -s -- -y
 
     # --- Настройка для root ---
     # Создание директорий для конфигурации
@@ -1035,21 +1039,25 @@ ROOT_GREETING_EOF
     curl -sL https://raw.githubusercontent.com/docker/compose/master/contrib/completion/fish/docker-compose.fish -o /root/.config/fish/completions/docker-compose.fish
 
     # Установка Fisher и плагинов для root
-    su - root -c "fish -c 'curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher'"
-    su - root -c "fish -c 'fisher install jethrokuan/z'"
-    su - root -c "fish -c 'fisher install PatrickF1/fzf.fish'"
-    su - root -c "fish -c 'fisher install jorgebucaran/autopair.fish'"
-    su - root -c "fish -c 'fisher install franciscolourenco/done'"
-    su - root -c "fish -c 'fisher install edc/bass'"
-
-    # Установка Starship для root
-    su - root -c "curl -sS https://starship.rs/install.sh | sh -s -- -y"
+    step "Установка Fisher и плагинов для root"
+    # Сначала устанавливаем Fisher
+    curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
+    fisher install jorgebucaran/fisher
+    
+    # Затем устанавливаем плагины
+    fisher install jethrokuan/z
+    fisher install PatrickF1/fzf.fish
+    fisher install jorgebucaran/autopair.fish
+    fisher install franciscolourenco/done
+    fisher install edc/bass
 
     # Установка fish по умолчанию для root
     chsh -s /usr/bin/fish root
 
     # --- Настройка для нового пользователя ---
     if [ "$CREATE_USER" = true ] && [ -n "$new_username" ]; then
+        step "Настройка fish shell для пользователя $new_username"
+        
         # Создание директорий
         su - $new_username -c "mkdir -p ~/.config/fish/functions"
         su - $new_username -c "mkdir -p ~/.config/fish/completions"
@@ -1108,19 +1116,31 @@ USER_GREETING_EOF
         su - $new_username -c "curl -sL https://raw.githubusercontent.com/docker/compose/master/contrib/completion/fish/docker-compose.fish -o ~/.config/fish/completions/docker-compose.fish"
 
         # Установка Fisher и плагинов для пользователя
-        su - $new_username -c "fish -c 'curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher'"
-        su - $new_username -c "fish -c 'fisher install jethrokuan/z'"
-        su - $new_username -c "fish -c 'fisher install PatrickF1/fzf.fish'"
-        su - $new_username -c "fish -c 'fisher install jorgebucaran/autopair.fish'"
-        su - $new_username -c "fish -c 'fisher install franciscolourenco/done'"
-        su - $new_username -c "fish -c 'fisher install edc/bass'"
+        step "Установка Fisher и плагинов для пользователя $new_username"
+        
+        # Создаем временный скрипт для установки Fisher
+        cat > /tmp/install_fisher.sh << 'FISHER_SCRIPT_EOF'
+#!/bin/bash
+# Установка Fisher и плагинов
+curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
+fisher install jorgebucaran/fisher
+fisher install jethrokuan/z
+fisher install PatrickF1/fzf.fish
+fisher install jorgebucaran/autopair.fish
+fisher install franciscolourenco/done
+fisher install edc/bass
+FISHER_SCRIPT_EOF
 
-        # Установка Starship для пользователя
-        su - $new_username -c "curl -sS https://starship.rs/install.sh | sh -s -- -y"
+        chmod +x /tmp/install_fisher.sh
+        su - $new_username -c "fish /tmp/install_fisher.sh"
+        rm -f /tmp/install_fisher.sh
 
         # Установка fish по умолчанию для пользователя
         chsh -s /usr/bin/fish $new_username
     fi
+    
+    echo -e "\033[0;32m✓ Fish shell успешно настроен для всех пользователей\033[0m"
+    echo -e "\033[0;33m⚠ Для применения изменений перезапустите терминал или выполните: exec fish\033[0m"
 fi
 
 # Очистка временных файлов
