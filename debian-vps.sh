@@ -1028,7 +1028,7 @@ ROOT_CONFIG_EOF
     # Приветствие для root
     cat > /root/.config/fish/functions/fish_greeting.fish << 'ROOT_GREETING_EOF'
 function fish_greeting
-    echo "🐧 WSL Debian [ROOT] - (date '+%Y-%m-%d %H:%M')"
+    echo "🐧 WSL Debian [ROOT] - "(date '+%Y-%m-%d %H:%M')""
 end
 ROOT_GREETING_EOF
 
@@ -1105,7 +1105,7 @@ USER_CONFIG_EOF
 
         cat > /tmp/user_greeting.fish << 'USER_GREETING_EOF'
 function fish_greeting
-    echo "🐧 WSL Debian - (date '+%Y-%m-%d %H:%M')"
+    echo "🐧 WSL Debian - "(date '+%Y-%m-%d %H:%M')""
 end
 USER_GREETING_EOF
 
