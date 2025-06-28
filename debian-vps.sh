@@ -261,9 +261,6 @@ select_components() {
     # Добавляю выбор установки и настройки fish shell
     select_option "Установка и настройка fish shell (Fisher, плагины, Starship, fzf и др.)" "INSTALL_FISH" "false"
     
-    # Отладочная информация
-    echo "DEBUG: INSTALL_FISH = $INSTALL_FISH"
-    
     echo
     print_color "yellow" "═════════════════════════════════════════"
     print_color "yellow" "  Выбранные компоненты будут установлены"
@@ -979,7 +976,6 @@ fi
 
 # 18. Полная настройка fish shell для root и пользователя (по примеру snaplyze/debian-wsl)
 if [ "$INSTALL_FISH" = true ]; then
-    echo "DEBUG: Вход в секцию установки fish shell, INSTALL_FISH = $INSTALL_FISH"
     step "Полная настройка fish shell (Fisher, плагины, fzf, fd, bat, Starship, автодополнения Docker)"
 
     # Установка fish shell и дополнительных утилит
@@ -1043,16 +1039,23 @@ ROOT_GREETING_EOF
 
     # Установка Fisher и плагинов для root
     step "Установка Fisher и плагинов для root"
-    # Сначала устанавливаем Fisher
-    curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
-    fisher install jorgebucaran/fisher
     
-    # Затем устанавливаем плагины
-    fisher install jethrokuan/z
-    fisher install PatrickF1/fzf.fish
-    fisher install jorgebucaran/autopair.fish
-    fisher install franciscolourenco/done
-    fisher install edc/bass
+    # Создаем временный fish скрипт для установки Fisher
+    cat > /tmp/install_fisher_root.fish << 'FISHER_ROOT_SCRIPT_EOF'
+#!/usr/bin/env fish
+# Установка Fisher и плагинов для root
+curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
+fisher install jorgebucaran/fisher
+fisher install jethrokuan/z
+fisher install PatrickF1/fzf.fish
+fisher install jorgebucaran/autopair.fish
+fisher install franciscolourenco/done
+fisher install edc/bass
+FISHER_ROOT_SCRIPT_EOF
+
+    chmod +x /tmp/install_fisher_root.fish
+    fish /tmp/install_fisher_root.fish
+    rm -f /tmp/install_fisher_root.fish
 
     # Установка fish по умолчанию для root
     chsh -s /usr/bin/fish root
@@ -1123,7 +1126,7 @@ USER_GREETING_EOF
         
         # Создаем временный скрипт для установки Fisher
         cat > /tmp/install_fisher.sh << 'FISHER_SCRIPT_EOF'
-#!/bin/bash
+#!/usr/bin/env fish
 # Установка Fisher и плагинов
 curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
 fisher install jorgebucaran/fisher
@@ -1145,7 +1148,7 @@ FISHER_SCRIPT_EOF
     echo -e "\033[0;32m✓ Fish shell успешно настроен для всех пользователей\033[0m"
     echo -e "\033[0;33m⚠ Для применения изменений перезапустите терминал или выполните: exec fish\033[0m"
 else
-    echo "DEBUG: Пропуск установки fish shell, INSTALL_FISH = $INSTALL_FISH"
+    :
 fi
 
 # Очистка временных файлов
