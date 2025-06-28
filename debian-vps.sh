@@ -8,6 +8,16 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Поддержка неинтерактивного режима через переменные окружения
+# Пример использования: 
+# NONINTERACTIVE=true NEW_USERNAME=admin INSTALL_FISH=true curl -s https://raw.githubusercontent.com/snaplyze/linux-postinstall/main/debian-vps.sh | bash
+
+# Переменные для неинтерактивного режима
+NONINTERACTIVE=${NONINTERACTIVE:-false}
+NEW_USERNAME=${NEW_USERNAME:-""}
+SSH_PUBLIC_KEY=${SSH_PUBLIC_KEY:-""}
+NEW_HOSTNAME=${NEW_HOSTNAME:-""}
+
 # Функция для вывода текущего шага
 step() {
     echo -e "\n\033[1;32m>>> $1\033[0m"
@@ -272,8 +282,186 @@ select_components() {
     fi
 }
 
+# Функция для неинтерактивного выбора компонентов
+select_components_noninteractive() {
+    echo ""
+    print_color "blue" "╔═════════════════════════════════════════╗"
+    print_color "blue" "║     НАСТРОЙКА VPS НА DEBIAN 12          ║"
+    print_color "blue" "║         НЕИНТЕРАКТИВНЫЙ РЕЖИМ           ║"
+    print_color "blue" "╚═════════════════════════════════════════╝"
+    echo ""
+    
+    print_color "blue" "═════════════════════════════════════════"
+    print_color "blue" "  НАСТРОЙКА КОМПОНЕНТОВ ЧЕРЕЗ ПЕРЕМЕННЫЕ"
+    print_color "blue" "═════════════════════════════════════════"
+    echo
+    
+    # Устанавливаем компоненты на основе переменных окружения
+    # Если переменная не установлена, используем значение по умолчанию false
+    
+    # Обновление системы
+    if [ "$UPDATE_SYSTEM" = "true" ]; then
+        echo -e "\033[0;32m✓ Обновление системы (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Обновление системы (отключено)\033[0m"
+    fi
+    
+    # Базовые утилиты
+    if [ "$INSTALL_BASE_UTILS" = "true" ]; then
+        echo -e "\033[0;32m✓ Базовые утилиты (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Базовые утилиты (отключено)\033[0m"
+    fi
+    
+    # Создание пользователя
+    if [ "$CREATE_USER" = "true" ]; then
+        echo -e "\033[0;32m✓ Создание нового пользователя (включено)"
+        if [ -n "$NEW_USERNAME" ]; then
+            echo -e "  Имя пользователя: $NEW_USERNAME\033[0m"
+        else
+            echo -e "  (имя пользователя не указано)\033[0m"
+        fi
+    else
+        echo -e "\033[0;33m○ Создание нового пользователя (отключено)\033[0m"
+    fi
+    
+    # Изменение hostname
+    if [ "$CHANGE_HOSTNAME" = "true" ]; then
+        echo -e "\033[0;32m✓ Изменение hostname (включено)"
+        if [ -n "$NEW_HOSTNAME" ]; then
+            echo -e "  Новое имя хоста: $NEW_HOSTNAME\033[0m"
+        else
+            echo -e "  (имя хоста не указано)\033[0m"
+        fi
+    else
+        echo -e "\033[0;33m○ Изменение hostname (отключено)\033[0m"
+    fi
+    
+    # SSH
+    if [ "$SETUP_SSH" = "true" ]; then
+        echo -e "\033[0;32m✓ Настройка SSH (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Настройка SSH (отключено)\033[0m"
+    fi
+    
+    # Fail2ban
+    if [ "$SETUP_FAIL2BAN" = "true" ]; then
+        echo -e "\033[0;32m✓ Настройка Fail2ban (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Настройка Fail2ban (отключено)\033[0m"
+    fi
+    
+    # Firewall
+    if [ "$SETUP_FIREWALL" = "true" ]; then
+        echo -e "\033[0;32m✓ Настройка Firewall (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Настройка Firewall (отключено)\033[0m"
+    fi
+    
+    # BBR
+    if [ "$SETUP_BBR" = "true" ]; then
+        echo -e "\033[0;32m✓ Включение TCP BBR (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Включение TCP BBR (отключено)\033[0m"
+    fi
+    
+    # XanMod
+    if [ "$INSTALL_XANMOD" = "true" ]; then
+        echo -e "\033[0;32m✓ Установка ядра XanMod (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Установка ядра XanMod (отключено)\033[0m"
+    fi
+    
+    # Оптимизация системы
+    if [ "$OPTIMIZE_SYSTEM" = "true" ]; then
+        echo -e "\033[0;32m✓ Оптимизация системы (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Оптимизация системы (отключено)\033[0m"
+    fi
+    
+    # Swap
+    if [ "$SETUP_SWAP" = "true" ]; then
+        echo -e "\033[0;32m✓ Настройка swap (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Настройка swap (отключено)\033[0m"
+    fi
+    
+    # NTP
+    if [ "$SETUP_NTP" = "true" ]; then
+        echo -e "\033[0;32m✓ NTP синхронизация (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ NTP синхронизация (отключено)\033[0m"
+    fi
+    
+    # Logrotate
+    if [ "$SETUP_LOGROTATE" = "true" ]; then
+        echo -e "\033[0;32m✓ Настройка logrotate (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Настройка logrotate (отключено)\033[0m"
+    fi
+    
+    # Автообновления
+    if [ "$SETUP_AUTO_UPDATES" = "true" ]; then
+        echo -e "\033[0;32m✓ Автоматические обновления (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Автоматические обновления (отключено)\033[0m"
+    fi
+    
+    # Мониторинг
+    if [ "$INSTALL_MONITORING" = "true" ]; then
+        echo -e "\033[0;32m✓ Инструменты мониторинга (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Инструменты мониторинга (отключено)\033[0m"
+    fi
+    
+    # Docker
+    if [ "$INSTALL_DOCKER" = "true" ]; then
+        echo -e "\033[0;32m✓ Docker и Docker Compose (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Docker и Docker Compose (отключено)\033[0m"
+    fi
+    
+    # Часовой пояс
+    if [ "$SETUP_TIMEZONE" = "true" ]; then
+        echo -e "\033[0;32m✓ Настройка часового пояса (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Настройка часового пояса (отключено)\033[0m"
+    fi
+    
+    # Локали
+    if [ "$SETUP_LOCALES" = "true" ]; then
+        echo -e "\033[0;32m✓ Настройка локалей (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Настройка локалей (отключено)\033[0m"
+    fi
+    
+    # Усиленная безопасность SSH
+    if [ "$SECURE_SSH" = "true" ]; then
+        echo -e "\033[0;32m✓ Усиленная безопасность SSH (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Усиленная безопасность SSH (отключено)\033[0m"
+    fi
+    
+    # Fish shell
+    if [ "$INSTALL_FISH" = "true" ]; then
+        echo -e "\033[0;32m✓ Установка fish shell (включено)\033[0m"
+    else
+        echo -e "\033[0;33m○ Установка fish shell (отключено)\033[0m"
+    fi
+    
+    echo
+    print_color "yellow" "═════════════════════════════════════════"
+    print_color "yellow" "  Начинаем установку выбранных компонентов"
+    print_color "yellow" "═════════════════════════════════════════"
+    echo
+}
+
 # Вызываем выбор компонентов
-select_components
+if [ "$NONINTERACTIVE" = "true" ]; then
+    select_components_noninteractive
+else
+    select_components
+fi
 
 # 1. Обновление системы
 if [ "$UPDATE_SYSTEM" = true ]; then
@@ -307,55 +495,88 @@ if [ "$CREATE_USER" = true ]; then
         apt install -y sudo
     fi
     
-    # Запрос имени пользователя с проверкой корректности
-    while true; do
-        read -p "Введите имя нового пользователя: " new_username
-        
-        # Проверка корректности имени пользователя
+    # В неинтерактивном режиме используем переменную NEW_USERNAME
+    if [ "$NONINTERACTIVE" = "true" ]; then
+        if [ -z "$NEW_USERNAME" ]; then
+            print_color "red" "Ошибка: В неинтерактивном режиме необходимо указать NEW_USERNAME"
+            exit 1
+        fi
+        new_username="$NEW_USERNAME"
+    else
+        # Запрос имени пользователя с проверкой корректности
+        while true; do
+            read -p "Введите имя нового пользователя: " new_username
+            
+            # Проверка корректности имени пользователя
+            if [[ ! $new_username =~ ^[a-z][-a-z0-9_]*$ ]]; then
+                print_color "red" "Ошибка: Имя пользователя должно:"
+                print_color "red" "- Начинаться с буквы в нижнем регистре"
+                print_color "red" "- Содержать только буквы в нижнем регистре, цифры, дефисы и подчеркивания"
+                print_color "red" "- Не содержать пробелов или специальных символов"
+                continue
+            fi
+            
+            # Проверка длины имени пользователя
+            if [ ${#new_username} -gt 32 ]; then
+                print_color "red" "Ошибка: Имя пользователя слишком длинное (максимум 32 символа)"
+                continue
+            fi
+            
+            # Если дошли до этой точки, имя пользователя корректно
+            break
+        done
+    fi
+    
+    # Проверка корректности имени пользователя в неинтерактивном режиме
+    if [ "$NONINTERACTIVE" = "true" ]; then
         if [[ ! $new_username =~ ^[a-z][-a-z0-9_]*$ ]]; then
-            print_color "red" "Ошибка: Имя пользователя должно:"
-            print_color "red" "- Начинаться с буквы в нижнем регистре"
-            print_color "red" "- Содержать только буквы в нижнем регистре, цифры, дефисы и подчеркивания"
-            print_color "red" "- Не содержать пробелов или специальных символов"
-            continue
+            print_color "red" "Ошибка: Некорректное имя пользователя в переменной NEW_USERNAME"
+            print_color "red" "Имя пользователя должно начинаться с буквы в нижнем регистре"
+            exit 1
         fi
         
-        # Проверка длины имени пользователя
         if [ ${#new_username} -gt 32 ]; then
             print_color "red" "Ошибка: Имя пользователя слишком длинное (максимум 32 символа)"
-            continue
+            exit 1
         fi
-        
-        # Если дошли до этой точки, имя пользователя корректно
-        break
-    done
+    fi
     
     # Проверка, существует ли уже такой пользователь
     if id "$new_username" &>/dev/null; then
         echo "Пользователь $new_username уже существует"
-        read -p "Продолжить настройку sudo для этого пользователя? (y/n): " configure_sudo
-        if [[ "$configure_sudo" != "y" && "$configure_sudo" != "Y" ]]; then
-            echo "Пропуск создания пользователя."
-        else
-            # Настройка sudo без пароля для существующего пользователя
-            if [ ! -d "/etc/sudoers.d" ]; then
-                mkdir -p /etc/sudoers.d
+        if [ "$NONINTERACTIVE" != "true" ]; then
+            read -p "Продолжить настройку sudo для этого пользователя? (y/n): " configure_sudo
+            if [[ "$configure_sudo" != "y" && "$configure_sudo" != "Y" ]]; then
+                echo "Пропуск создания пользователя."
+                continue
             fi
-            
-            echo "$new_username ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/nopasswd-$new_username
-            echo "root ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/nopasswd-root
-            
-            # Установка правильных прав доступа
-            chmod 440 /etc/sudoers.d/nopasswd-$new_username
-            chmod 440 /etc/sudoers.d/nopasswd-root
-            
-            echo "Настроено выполнение команд sudo без пароля для пользователей $new_username и root"
         fi
+        
+        # Настройка sudo без пароля для существующего пользователя
+        if [ ! -d "/etc/sudoers.d" ]; then
+            mkdir -p /etc/sudoers.d
+        fi
+        
+        echo "$new_username ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/nopasswd-$new_username
+        echo "root ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/nopasswd-root
+        
+        # Установка правильных прав доступа
+        chmod 440 /etc/sudoers.d/nopasswd-$new_username
+        chmod 440 /etc/sudoers.d/nopasswd-root
+        
+        echo "Настроено выполнение команд sudo без пароля для пользователей $new_username и root"
     else
-        # Создание нового пользователя (с запросом пароля)
-        echo "Будет запрошен и установлен пароль для нового пользователя."
-        echo "Примечание: Даже после установки пароля, для sudo пароль запрашиваться не будет."
-        adduser --gecos "" $new_username
+        # Создание нового пользователя
+        if [ "$NONINTERACTIVE" = "true" ]; then
+            # В неинтерактивном режиме создаем пользователя без пароля
+            useradd -m -s /bin/bash -G sudo $new_username
+            echo "Пользователь $new_username создан без пароля (только SSH ключи)"
+        else
+            # Создание нового пользователя (с запросом пароля)
+            echo "Будет запрошен и установлен пароль для нового пользователя."
+            echo "Примечание: Даже после установки пароля, для sudo пароль запрашиваться не будет."
+            adduser --gecos "" $new_username
+        fi
         
         # Добавление пользователя в группу sudo
         usermod -aG sudo $new_username
@@ -385,18 +606,31 @@ if [ "$CREATE_USER" = true ]; then
         chmod 600 /home/$new_username/.ssh/authorized_keys
     fi
     
-    # Спрашиваем, нужно ли добавить SSH ключ для нового пользователя
-    read -p "Хотите добавить SSH ключ для пользователя $new_username? (y/n): " add_ssh_key
-    if [[ "$add_ssh_key" == "y" || "$add_ssh_key" == "Y" ]]; then
-        read -p "Введите публичный SSH ключ: " ssh_key
-        echo "$ssh_key" >> /home/$new_username/.ssh/authorized_keys
-        echo "SSH ключ добавлен для пользователя $new_username"
-        
-        # Сохраняем информацию о добавлении ключа в переменную
-        ssh_key_added=true
+    # Добавление SSH ключа
+    if [ "$NONINTERACTIVE" = "true" ]; then
+        # В неинтерактивном режиме используем переменную SSH_PUBLIC_KEY
+        if [ -n "$SSH_PUBLIC_KEY" ]; then
+            echo "$SSH_PUBLIC_KEY" >> /home/$new_username/.ssh/authorized_keys
+            echo "SSH ключ добавлен для пользователя $new_username"
+            ssh_key_added=true
+        else
+            echo "SSH ключ не указан в переменной SSH_PUBLIC_KEY"
+            ssh_key_added=false
+        fi
     else
-        # Если ключ не добавлен, отмечаем это
-        ssh_key_added=false
+        # Спрашиваем, нужно ли добавить SSH ключ для нового пользователя
+        read -p "Хотите добавить SSH ключ для пользователя $new_username? (y/n): " add_ssh_key
+        if [[ "$add_ssh_key" == "y" || "$add_ssh_key" == "Y" ]]; then
+            read -p "Введите публичный SSH ключ: " ssh_key
+            echo "$ssh_key" >> /home/$new_username/.ssh/authorized_keys
+            echo "SSH ключ добавлен для пользователя $new_username"
+            
+            # Сохраняем информацию о добавлении ключа в переменную
+            ssh_key_added=true
+        else
+            # Если ключ не добавлен, отмечаем это
+            ssh_key_added=false
+        fi
     fi
 fi
 
@@ -407,28 +641,51 @@ if [ "$CHANGE_HOSTNAME" = true ]; then
     current_hostname=$(hostname)
     echo "Текущее имя хоста: $current_hostname"
     
-    # Запрос нового имени хоста с проверкой корректности
-    while true; do
-        read -p "Введите новое имя хоста: " new_hostname
-        
-        # Проверка корректности имени хоста
+    # В неинтерактивном режиме используем переменную NEW_HOSTNAME
+    if [ "$NONINTERACTIVE" = "true" ]; then
+        if [ -z "$NEW_HOSTNAME" ]; then
+            print_color "red" "Ошибка: В неинтерактивном режиме необходимо указать NEW_HOSTNAME"
+            exit 1
+        fi
+        new_hostname="$NEW_HOSTNAME"
+    else
+        # Запрос нового имени хоста с проверкой корректности
+        while true; do
+            read -p "Введите новое имя хоста: " new_hostname
+            
+            # Проверка корректности имени хоста
+            if [[ ! $new_hostname =~ ^[a-z0-9][-a-z0-9]*[a-z0-9]$ ]]; then
+                print_color "red" "Ошибка: Имя хоста должно:"
+                print_color "red" "- Начинаться и заканчиваться буквой или цифрой"
+                print_color "red" "- Содержать только буквы в нижнем регистре, цифры и дефисы"
+                print_color "red" "- Не содержать пробелов, подчеркиваний или специальных символов"
+                continue
+            fi
+            
+            # Проверка длины имени хоста
+            if [ ${#new_hostname} -gt 63 ]; then
+                print_color "red" "Ошибка: Имя хоста слишком длинное (максимум 63 символа)"
+                continue
+            fi
+            
+            # Если дошли до этой точки, имя хоста корректно
+            break
+        done
+    fi
+    
+    # Проверка корректности имени хоста в неинтерактивном режиме
+    if [ "$NONINTERACTIVE" = "true" ]; then
         if [[ ! $new_hostname =~ ^[a-z0-9][-a-z0-9]*[a-z0-9]$ ]]; then
-            print_color "red" "Ошибка: Имя хоста должно:"
-            print_color "red" "- Начинаться и заканчиваться буквой или цифрой"
-            print_color "red" "- Содержать только буквы в нижнем регистре, цифры и дефисы"
-            print_color "red" "- Не содержать пробелов, подчеркиваний или специальных символов"
-            continue
+            print_color "red" "Ошибка: Некорректное имя хоста в переменной NEW_HOSTNAME"
+            print_color "red" "Имя хоста должно начинаться и заканчиваться буквой или цифрой"
+            exit 1
         fi
         
-        # Проверка длины имени хоста
         if [ ${#new_hostname} -gt 63 ]; then
             print_color "red" "Ошибка: Имя хоста слишком длинное (максимум 63 символа)"
-            continue
+            exit 1
         fi
-        
-        # Если дошли до этой точки, имя хоста корректно
-        break
-    done
+    fi
     
     # Изменение имени хоста
     hostnamectl set-hostname "$new_hostname"
