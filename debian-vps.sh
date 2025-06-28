@@ -88,12 +88,11 @@ select_components() {
         if [[ "$choice" == "y" || "$choice" == "Y" ]]; then
             eval "$var_name=true"
             echo -e "  \033[0;32m✓ Выбрано\033[0m"
-            return 0
         else
             eval "$var_name=false"
             echo "  ○ Пропущено"
-            return 1
         fi
+        return 0
     }
     
     print_color "blue" "═════════════════════════════════════════"
@@ -261,6 +260,9 @@ select_components() {
     
     # Добавляю выбор установки и настройки fish shell
     select_option "Установка и настройка fish shell (Fisher, плагины, Starship, fzf и др.)" "INSTALL_FISH" "false"
+    
+    # Отладочная информация
+    echo "DEBUG: INSTALL_FISH = $INSTALL_FISH"
     
     echo
     print_color "yellow" "═════════════════════════════════════════"
@@ -977,6 +979,7 @@ fi
 
 # 18. Полная настройка fish shell для root и пользователя (по примеру snaplyze/debian-wsl)
 if [ "$INSTALL_FISH" = true ]; then
+    echo "DEBUG: Вход в секцию установки fish shell, INSTALL_FISH = $INSTALL_FISH"
     step "Полная настройка fish shell (Fisher, плагины, fzf, fd, bat, Starship, автодополнения Docker)"
 
     # Установка fish shell и дополнительных утилит
@@ -1141,6 +1144,8 @@ FISHER_SCRIPT_EOF
     
     echo -e "\033[0;32m✓ Fish shell успешно настроен для всех пользователей\033[0m"
     echo -e "\033[0;33m⚠ Для применения изменений перезапустите терминал или выполните: exec fish\033[0m"
+else
+    echo "DEBUG: Пропуск установки fish shell, INSTALL_FISH = $INSTALL_FISH"
 fi
 
 # Очистка временных файлов
