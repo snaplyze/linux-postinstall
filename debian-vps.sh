@@ -1212,7 +1212,14 @@ echo -e "\n\033[1;32mРекомендуется перезагрузить си�
 read -p "Перезагрузить сейчас? (y/n): " reboot_now
 if [[ "$reboot_now" == "y" || "$reboot_now" == "Y" ]]; then
     echo "Перезагрузка системы..."
-    reboot
+    # Пробуем разные способы перезагрузки
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl reboot
+    elif command -v shutdown >/dev/null 2>&1; then
+        shutdown -r now
+    else
+        reboot
+    fi
 else
     echo "Для ручной перезагрузки введите: sudo reboot"
 fi
