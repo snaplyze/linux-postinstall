@@ -266,9 +266,9 @@ install_docker() {
 # --- Интерактивное меню ---
 select_components() {
     clear
-    print_color "blue" "╔════════════════════════════════════════════════════════════╗"
-    print_color "blue" "║     Скрипт настройки Debian для WSL                      ║"
-    print_color "blue" "╚════════════════════════════════════════════════════════════╝"
+    print_color "blue" "╔══════════════════════════════════════╗"
+    print_color "blue" "║    Скрипт настройки Debian для WSL   ║"
+    print_color "blue" "╚══════════════════════════════════════╝"
     echo
     print_color "yellow" "Этот скрипт поможет вам настроить основные компоненты системы."
     print_color "yellow" "Перед началом убедитесь, что в PowerShell выполнены команды:"
@@ -279,6 +279,7 @@ select_components() {
 
     PS3='Выберите опцию (номер) и нажмите Enter: '
     options=(
+        "Создать нового пользователя с правами sudo"
         "Обновить систему и репозитории"
         "Настроить локализацию и время"
         "Создать /etc/wsl.conf (для systemd и пользователя по умолчанию)"
@@ -292,6 +293,7 @@ select_components() {
     select opt in "${options[@]}"
     do
         case $opt in
+            "Создать нового пользователя с правами sudo") CREATE_USER=true; break;;
             "Обновить систему и репозитории") UPDATE_SYSTEM=true; break;;
             "Настроить локализацию и время") SETUP_LOCALES_TIME=true; break;; 
             "Создать /etc/wsl.conf (для systemd и пользователя по умолчанию)") SETUP_WSL_CONF=true; break;; 
@@ -300,7 +302,7 @@ select_components() {
             "Настроить Fish Shell (Fisher, Starship, плагины) для пользователя и root") SETUP_FISH=true; break;; 
             "Установить Docker с поддержкой GPU") INSTALL_DOCKER=true; break;; 
             "Выполнить все шаги") 
-                UPDATE_SYSTEM=true; SETUP_LOCALES_TIME=true; SETUP_WSL_CONF=true; 
+                CREATE_USER=true; UPDATE_SYSTEM=true; SETUP_LOCALES_TIME=true; SETUP_WSL_CONF=true; 
                 INSTALL_NVIDIA=true; INSTALL_BASE_UTILS=true; SETUP_FISH=true; INSTALL_DOCKER=true; 
                 break;;
             "Выход") exit 0;; 
@@ -309,6 +311,7 @@ select_components() {
     done < /dev/tty
 
     # Запуск выбранных функций
+    if [ "$CREATE_USER" = true ]; then create_user; fi
     if [ "$UPDATE_SYSTEM" = true ]; then update_system; fi
     if [ "$SETUP_LOCALES_TIME" = true ]; then setup_locales_time; fi
     if [ "$SETUP_WSL_CONF" = true ]; then setup_wsl_conf; fi
