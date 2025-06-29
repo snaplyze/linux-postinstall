@@ -1,5 +1,5 @@
 #!/bin/bash
-# Скрипт для автоматической настройки Debian в WSL2
+# Проверка, что скрипт запущен с правами root
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Этот скрипт должен быть запущен с правами root. Выполните: sudo $0"
@@ -36,6 +36,7 @@ is_installed() {
 
 # --- Переменные для выбора компонентов ---
 UPDATE_SYSTEM=false
+CREATE_USER=false
 SETUP_LOCALES_TIME=false
 SETUP_WSL_CONF=false
 INSTALL_NVIDIA=false
@@ -52,9 +53,38 @@ fi
 
 # --- Функции установки компонентов ---
 
-# 1. Обновление системы и репозиториев
+# 1. Создание пользователя
+create_user() {
+    step "1. Создание нового пользователя"
+    print_color "yellow" "Введите имя нового пользователя:"
+    read -r new_user < /dev/tty
+    if [ -z "$new_user" ]; then
+        print_color "red" "Имя пользователя не может быть пустым. Пропуск."
+        return 1
+    fi
+
+    if id "$new_user" &>/dev/null; then
+        print_color "yellow" "Пользователь '$new_user' уже существует. Пропуск."
+        return 0
+    fi
+
+    print_color "yellow" "Создаем пользователя '$new_user' с оболочкой /bin/bash..."
+    useradd -m -G sudo -s /bin/bash "$new_user"
+
+    print_color "yellow" "Установите пароль для пользователя '$new_user':"
+    passwd "$new_user" < /dev/tty
+
+    print_color "yellow" "Настраиваем sudo без пароля для '$new_user'..."
+    echo "$new_user ALL=(ALL) NOPASSWD: ALL" | tee "/etc/sudoers.d/$new_user" > /dev/null
+    chmod 440 "/etc/sudoers.d/$new_user"
+
+    print_color "green" "Пользователь '$new_user' успешно создан."
+    print_color "yellow" "Теперь вы можете запустить для него настройку Fish Shell."
+}
+
+# 2. Обновление системы и репозиториев
 update_system() {
-    step "1. Обновление системы и репозиториев"
+    step "2. Обновление системы и репозиториев"
     print_color "yellow" "Включаем репозитории contrib, non-free и non-free-firmware..."
     sed -i 's/main/main contrib non-free non-free-firmware/g' /etc/apt/sources.list
     
@@ -66,9 +96,9 @@ update_system() {
     print_color "green" "Система успешно обновлена."
 }
 
-# 2. Настройка локализации и времени
+# 3. Настройка локализации и времени
 setup_locales_time() {
-    step "2. Настройка локализации и времени"
+    step "3. Настройка локализации и времени"
     print_color "yellow" "Устанавливаем пакеты locales и tzdata..."
     apt-get install -y locales tzdata
 
@@ -93,9 +123,9 @@ EOL
     print_color "green" "Локализация и время настроены."
 }
 
-# 3. Настройка /etc/wsl.conf
+# 4. Настройка /etc/wsl.conf
 setup_wsl_conf() {
-    step "3. Настройка /etc/wsl.conf"
+    step "4. Настройка /etc/wsl.conf"
     print_color "yellow" "Введите имя пользователя по умолчанию для WSL (например, $DEFAULT_USER):"
     read -r wsl_user
     if [ -z "$wsl_user" ]; then
@@ -121,9 +151,9 @@ EOL
     print_color "yellow" "Не забудьте перезапустить WSL командой 'wsl --shutdown' в PowerShell."
 }
 
-# 4. Установка компонентов NVIDIA
+# 5. Установка компонентов NVIDIA
 install_nvidia() {
-    step "4. Установка компонентов NVIDIA для WSL"
+    step "5. Установка компонентов NVIDIA для WSL"
     print_color "yellow" "Добавляем GPG-ключ и репозиторий NVIDIA Container Toolkit..."
     curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
     curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
@@ -140,9 +170,9 @@ install_nvidia() {
     print_color "yellow" "Проверьте работу командой 'nvidia-smi' после перезапуска WSL."
 }
 
-# 5. Установка базовых утилит
+# 6. Установка базовых утилит
 install_base_utils() {
-    step "5. Установка базовых утилит"
+    step "6. Установка базовых утилит"
     apt-get install -y \
         nano \
         python3 \
@@ -160,9 +190,9 @@ install_base_utils() {
     print_color "green" "Базовые утилиты установлены."
 }
 
-# 6. Настройка Fish Shell
+# 7. Настройка Fish Shell
 setup_fish() {
-    step "6. Настройка Fish Shell для пользователя и root"
+    step "7. Настройка Fish Shell для пользователя и root"
     print_color "yellow" "Введите имя пользователя для настройки Fish (например, $DEFAULT_USER):"
     read -r target_user
     if [ -z "$target_user" ]; then
@@ -202,9 +232,9 @@ setup_fish() {
     print_color "green" "Fish Shell настроен для '$target_user' и root."
 }
 
-# 7. Установка Docker
+# 8. Установка Docker
 install_docker() {
-    step "7. Установка Docker с поддержкой GPU"
+    step "8. Установка Docker с поддержкой GPU"
     print_color "yellow" "Добавляем GPG-ключ и репозиторий Docker..."
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
@@ -247,7 +277,7 @@ select_components() {
     print_color "yellow" "3. Создан файл C:\Users\<USER>\.wslconfig с настройками памяти/CPU."
     echo
 
-    PS3='Выберите опции (через пробел, например, 1 3 5) и нажмите Enter: '
+    PS3='Выберите опцию (номер) и нажмите Enter: '
     options=(
         "Обновить систему и репозитории"
         "Настроить локализацию и время"
@@ -276,7 +306,7 @@ select_components() {
             "Выход") exit 0;; 
             *) echo "Неверная опция $REPLY";;
         esac
-    done
+    done < /dev/tty
 
     # Запуск выбранных функций
     if [ "$UPDATE_SYSTEM" = true ]; then update_system; fi
