@@ -54,6 +54,13 @@ NONINTERACTIVE=${NONINTERACTIVE:-false}
 NEW_USERNAME=${NEW_USERNAME:-""}
 SSH_PUBLIC_KEY=${SSH_PUBLIC_KEY:-""}
 NEW_HOSTNAME=${NEW_HOSTNAME:-""}
+# Дополнительные переменные для неинтерактивного режима
+# Пример: SETUP_TIMEZONE=true TIMEZONE=Europe/Berlin
+TIMEZONE=${TIMEZONE:-""}
+# Пример: SETUP_LOCALES=true LOCALE_DEFAULT=ru_RU.UTF-8 (или en_US.UTF-8)
+LOCALE_DEFAULT=${LOCALE_DEFAULT:-""}
+# Пример: AUTO_REBOOT=true (перезагрузка без запроса в конце)
+AUTO_REBOOT=${AUTO_REBOOT:-false}
 
 # Функция для вывода текущего шага
 step() {
@@ -258,7 +265,7 @@ select_components() {
     echo -e "  Текущее имя хоста: \033[1;34m$current_hostname\033[0m"
     select_option "Изменить имя хоста (hostname) сервера" "CHANGE_HOSTNAME" "false"
     
-    if grep -q "prohibit-password" /etc/ssh/sshd_config || grep -q "prohibit-password" /etc/ssh/sshd_config.d/secure.conf 2>/dev/null; then
+    if { [ -f /etc/ssh/sshd_config ] && grep -q "prohibit-password" /etc/ssh/sshd_config; } || grep -q "prohibit-password" /etc/ssh/sshd_config.d/secure.conf 2>/dev/null; then
         ssh_configured=true
         echo -e "\033[0;32m✓ Настройка SSH (уже настроено)\033[0m"
     else
@@ -282,11 +289,14 @@ select_components() {
         select_option "Настройка Firewall (UFW)" "SETUP_FIREWALL" "$firewall_configured"
     fi
     
-    if grep -q "tcp_congestion_control=bbr" /etc/sysctl.conf; then
+    # Проверка BBR через текущие значения sysctl или конфиги в /etc/sysctl.d
+    bbr_configured=false
+    if [ "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" = "bbr" ] || \
+       grep -qs "tcp_congestion_control=bbr" /etc/sysctl.conf 2>/dev/null || \
+       grep -qs "tcp_congestion_control=bbr" /etc/sysctl.d/*.conf 2>/dev/null; then
         bbr_configured=true
         echo -e "\033[0;32m✓ Включение TCP BBR (уже настроено)\033[0m"
     else
-        bbr_configured=false
         select_option "Включение TCP BBR" "SETUP_BBR" "$bbr_configured"
     fi
     
@@ -308,11 +318,13 @@ select_components() {
         select_option "Установка оптимизированного ядра XanMod" "INSTALL_XANMOD" "$xanmod_installed"
     fi
     
-    if grep -q "tcp_fastopen=3" /etc/sysctl.conf; then
+    # Проверка оптимизаций: по текущим значениям или наличию нашего конфигурационного файла
+    system_optimized=false
+    if [ "$(sysctl -n net.ipv4.tcp_fastopen 2>/dev/null)" = "3" ] || \
+       [ -f /etc/sysctl.d/99-optimization.conf ]; then
         system_optimized=true
         echo -e "\033[0;32m✓ Оптимизация производительности системы (уже настроено)\033[0m"
     else
-        system_optimized=false
         select_option "Оптимизация производительности системы" "OPTIMIZE_SYSTEM" "$system_optimized"
     fi
     
@@ -591,7 +603,7 @@ if [ "$UPDATE_SYSTEM" = true ]; then
     step "Обновление системы"
     apt update
     apt upgrade -y
-    apt dist-upgrade -y
+    apt full-upgrade -y
     apt autoremove -y
     apt clean
 fi
@@ -830,8 +842,14 @@ fi
 # 4. Настройка защиты SSH
 if [ "$SETUP_SSH" = true ]; then
     step "Настройка базовой безопасности SSH"
+    # Обеспечим наличие сервера OpenSSH
+    if ! is_installed openssh-server; then
+        apt install -y openssh-server
+    fi
     # Создание резервной копии оригинального конфига
-    cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+    if [ -f /etc/ssh/sshd_config ]; then
+        cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+    fi
 
     # Безопасные настройки SSH
     mkdir -p /etc/ssh/sshd_config.d/
@@ -897,17 +915,14 @@ fi
 # 7. Настройка TCP BBR для улучшения сетевой производительности
 if [ "$SETUP_BBR" = true ]; then
     step "Включение TCP BBR"
-    if ! grep -q "tcp_congestion_control=bbr" /etc/sysctl.conf; then
-        cat >> /etc/sysctl.conf << EOF
-
+    mkdir -p /etc/sysctl.d
+    cat > /etc/sysctl.d/99-bbr.conf << 'EOF'
 # Включение TCP BBR
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 EOF
-
-        # Применение изменений sysctl
-        sysctl -p
-    fi
+    # Применяем все конфигурации sysctl (включая drop-in в /etc/sysctl.d)
+    sysctl --system >/dev/null 2>&1 || sysctl -p >/dev/null 2>&1 || true
 fi
 
 # 7.1 Установка оптимизированного ядра XanMod
@@ -917,6 +932,13 @@ if [ "$INSTALL_XANMOD" = true ]; then
     # Проверяем текущую версию ядра
     current_kernel=$(uname -r)
     echo "Текущее ядро: $current_kernel"
+
+    # Проверяем архитектуру (ядра x64 доступны только для amd64)
+    arch=$(dpkg --print-architecture)
+    if [ "$arch" != "amd64" ]; then
+        print_color "yellow" "Архитектура $arch не поддерживается сборками linux-xanmod-x64v*. Пропуск установки XanMod."
+        INSTALL_XANMOD=false
+    fi
     
     # Создаем каталог для ключей, если он не существует
     mkdir -p /etc/apt/keyrings
@@ -1010,9 +1032,8 @@ fi
 # 8. Оптимизация производительности системы
 if [ "$OPTIMIZE_SYSTEM" = true ]; then
     step "Оптимизация производительности системы"
-    if ! grep -q "tcp_fastopen=3" /etc/sysctl.conf; then
-        cat >> /etc/sysctl.conf << EOF
-
+    mkdir -p /etc/sysctl.d
+    cat > /etc/sysctl.d/99-optimization.conf << 'EOF'
 # Оптимизация сетевого стека
 net.ipv4.tcp_fastopen=3
 net.ipv4.tcp_slow_start_after_idle=0
@@ -1029,47 +1050,51 @@ net.core.somaxconn=4096
 vm.swappiness=10
 vm.vfs_cache_pressure=50
 EOF
-
-        # Применение изменений
-        sysctl -p
-    fi
+    # Применение изменений из всех источников
+    sysctl --system >/dev/null 2>&1 || sysctl -p >/dev/null 2>&1 || true
 fi
 
 # 9. Настройка часового пояса
 if [ "$SETUP_TIMEZONE" = true ]; then
     step "Настройка часового пояса"
-    echo "Доступные часовые пояса:"
-    echo "1) Europe/Moscow"
-    echo "2) Europe/Kiev"
-    echo "3) Europe/Berlin"
-    echo "4) Europe/London"
-    echo "5) America/New_York"
-    echo "6) America/Los_Angeles"
-    echo "7) Asia/Tokyo"
-    echo "8) Asia/Shanghai"
-    echo "9) Australia/Sydney"
-    echo "10) Ввести свой"
-    
-    read -r -p "Выберите часовой пояс (1-10): " tz_choice
-    
-    case $tz_choice in
-        1) TZ="Europe/Moscow" ;;
-        2) TZ="Europe/Kiev" ;;
-        3) TZ="Europe/Berlin" ;;
-        4) TZ="Europe/London" ;;
-        5) TZ="America/New_York" ;;
-        6) TZ="America/Los_Angeles" ;;
-        7) TZ="Asia/Tokyo" ;;
-        8) TZ="Asia/Shanghai" ;;
-        9) TZ="Australia/Sydney" ;;
-        10) 
-           read -r -p "Введите часовой пояс (например, Europe/Paris): " TZ
-           ;;
-        *) TZ="UTC" ;;
-    esac
-    
-    timedatectl set-timezone $TZ
-    echo "Установлен часовой пояс: $TZ"
+    if [ "$NONINTERACTIVE" = "true" ]; then
+        TZ_TO_SET="$TIMEZONE"
+        if [ -z "$TZ_TO_SET" ]; then
+            TZ_TO_SET="$(timedatectl show --property=Timezone --value 2>/dev/null || echo UTC)"
+        fi
+    else
+        echo "Доступные часовые пояса:"
+        echo "1) Europe/Moscow"
+        echo "2) Europe/Kiev"
+        echo "3) Europe/Berlin"
+        echo "4) Europe/London"
+        echo "5) America/New_York"
+        echo "6) America/Los_Angeles"
+        echo "7) Asia/Tokyo"
+        echo "8) Asia/Shanghai"
+        echo "9) Australia/Sydney"
+        echo "10) Ввести свой"
+        read -r -p "Выберите часовой пояс (1-10): " tz_choice
+        case $tz_choice in
+            1) TZ_TO_SET="Europe/Moscow" ;;
+            2) TZ_TO_SET="Europe/Kiev" ;;
+            3) TZ_TO_SET="Europe/Berlin" ;;
+            4) TZ_TO_SET="Europe/London" ;;
+            5) TZ_TO_SET="America/New_York" ;;
+            6) TZ_TO_SET="America/Los_Angeles" ;;
+            7) TZ_TO_SET="Asia/Tokyo" ;;
+            8) TZ_TO_SET="Asia/Shanghai" ;;
+            9) TZ_TO_SET="Australia/Sydney" ;;
+            10)
+                read -r -p "Введите часовой пояс (например, Europe/Paris): " TZ_TO_SET
+                ;;
+            *) TZ_TO_SET="UTC" ;;
+        esac
+    fi
+    if [ -n "$TZ_TO_SET" ]; then
+        timedatectl set-timezone "$TZ_TO_SET"
+        echo "Установлен часовой пояс: $TZ_TO_SET"
+    fi
 fi
 
 # 10. Настройка NTP для синхронизации времени
@@ -1118,11 +1143,12 @@ if [ "$SETUP_SWAP" = true ]; then
     swapon /swapfile
     echo '/swapfile none swap sw 0 0' >> /etc/fstab
     
-    # Оптимизация использования swap
-    if ! grep -q "vm.swappiness=10" /etc/sysctl.conf; then
-        echo "vm.swappiness=10" >> /etc/sysctl.conf
-        sysctl -p
-    fi
+    # Оптимизация использования swap через /etc/sysctl.d
+    mkdir -p /etc/sysctl.d
+    cat > /etc/sysctl.d/60-swap.conf << 'EOF'
+vm.swappiness=10
+EOF
+    sysctl --system >/dev/null 2>&1 || sysctl -p >/dev/null 2>&1 || true
     
     # Проверка статуса swap
     echo "Статус swap после настройки:"
@@ -1137,30 +1163,51 @@ if [ "$SETUP_LOCALES" = true ]; then
     ensure_locale "ru_RU.UTF-8"
     ensure_locale "en_US.UTF-8"
 
-    echo "Выберите локаль по умолчанию:"
-    echo "1) Русская (ru_RU.UTF-8)"
-    echo "2) Английская (en_US.UTF-8)"
-    read -r -p "Выберите локаль (1/2): " locale_choice
-
-    case "$locale_choice" in
-        1)
-            if ensure_locale "ru_RU.UTF-8" && update-locale LANG=ru_RU.UTF-8 LC_ALL=ru_RU.UTF-8; then
-                SYSTEM_LOCALE_DEFAULT="ru_RU.UTF-8"
-                echo "Установлена русская локаль по умолчанию (ru_RU.UTF-8)"
-            else
-                print_color "yellow" "Не удалось активировать ru_RU.UTF-8, используется en_US.UTF-8"
+    if [ "$NONINTERACTIVE" = "true" ]; then
+        case "$LOCALE_DEFAULT" in
+            ru_RU.UTF-8|ru_RU.utf8)
+                if ensure_locale "ru_RU.UTF-8" && update-locale LANG=ru_RU.UTF-8 LC_ALL=ru_RU.UTF-8; then
+                    SYSTEM_LOCALE_DEFAULT="ru_RU.UTF-8"
+                    echo "Установлена русская локаль по умолчанию (ru_RU.UTF-8)"
+                else
+                    print_color "yellow" "Не удалось активировать ru_RU.UTF-8, используется en_US.UTF-8"
+                    ensure_locale "en_US.UTF-8"
+                    update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+                    SYSTEM_LOCALE_DEFAULT="en_US.UTF-8"
+                fi
+                ;;
+            en_US.UTF-8|en_US.utf8|*)
                 ensure_locale "en_US.UTF-8"
                 update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
                 SYSTEM_LOCALE_DEFAULT="en_US.UTF-8"
-            fi
-            ;;
-        *)
-            ensure_locale "en_US.UTF-8"
-            update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
-            SYSTEM_LOCALE_DEFAULT="en_US.UTF-8"
-            echo "Установлена английская локаль по умолчанию (en_US.UTF-8)"
-            ;;
-    esac
+                echo "Установлена английская локаль по умолчанию (en_US.UTF-8)"
+                ;;
+        esac
+    else
+        echo "Выберите локаль по умолчанию:"
+        echo "1) Русская (ru_RU.UTF-8)"
+        echo "2) Английская (en_US.UTF-8)"
+        read -r -p "Выберите локаль (1/2): " locale_choice
+        case "$locale_choice" in
+            1)
+                if ensure_locale "ru_RU.UTF-8" && update-locale LANG=ru_RU.UTF-8 LC_ALL=ru_RU.UTF-8; then
+                    SYSTEM_LOCALE_DEFAULT="ru_RU.UTF-8"
+                    echo "Установлена русская локаль по умолчанию (ru_RU.UTF-8)"
+                else
+                    print_color "yellow" "Не удалось активировать ru_RU.UTF-8, используется en_US.UTF-8"
+                    ensure_locale "en_US.UTF-8"
+                    update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+                    SYSTEM_LOCALE_DEFAULT="en_US.UTF-8"
+                fi
+                ;;
+            *)
+                ensure_locale "en_US.UTF-8"
+                update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+                SYSTEM_LOCALE_DEFAULT="en_US.UTF-8"
+                echo "Установлена английская локаль по умолчанию (en_US.UTF-8)"
+                ;;
+        esac
+    fi
 fi
 
 # 13. Настройка logrotate для лог-файлов
@@ -1232,8 +1279,14 @@ if [ "$INSTALL_DOCKER" = true ]; then
         fi
         
         # Добавляем репозиторий Docker
+        # Для Debian 13 (trixie) Docker репозиторий может быть недоступен сразу после релиза.
+        # Используем bookworm как fallback при необходимости.
+        DOCKER_CODENAME="$DEBIAN_CODENAME"
+        if [ "$DEBIAN_CODENAME" = "trixie" ]; then
+            DOCKER_CODENAME="bookworm"
+        fi
         cat > /etc/apt/sources.list.d/docker.list << EOF
-deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian ${DEBIAN_CODENAME} stable
+deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian ${DOCKER_CODENAME} stable
 EOF
         
         # Обновляем пакетные списки
@@ -1337,8 +1390,10 @@ if [ "$SECURE_SSH" = true ]; then
     fi
     
     if [ "$SECURE_SSH" = true ]; then
-        # Создаем резервную копию конфигурации SSH
-        cp /etc/ssh/sshd_config /etc/ssh/sshd_config.$(date +%Y%m%d-%H%M%S).bak
+        # Создаем резервную копию конфигурации SSH (если есть)
+        if [ -f /etc/ssh/sshd_config ]; then
+            cp /etc/ssh/sshd_config /etc/ssh/sshd_config.$(date +%Y%m%d-%H%M%S).bak
+        fi
         
         # Настраиваем SSH для запрета входа по паролю и запрета входа под root
         cat > /etc/ssh/sshd_config.d/security.conf << EOF
@@ -1617,17 +1672,32 @@ if [ "$SECURE_SSH" = true ]; then
 fi
 
 echo -e "\n\033[1;32mРекомендуется перезагрузить систему.\033[0m"
-read -r -p "Перезагрузить сейчас? (y/n): " reboot_now
-if [[ "$reboot_now" == "y" || "$reboot_now" == "Y" ]]; then
-    echo "Перезагрузка системы..."
-    # Пробуем разные способы перезагрузки
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl reboot
-    elif command -v shutdown >/dev/null 2>&1; then
-        shutdown -r now
+if [ "$NONINTERACTIVE" = "true" ]; then
+    if [ "$AUTO_REBOOT" = "true" ]; then
+        echo "Перезагрузка системы..."
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl reboot
+        elif command -v shutdown >/dev/null 2>&1; then
+            shutdown -r now
+        else
+            reboot
+        fi
     else
-        reboot
+        echo "Для ручной перезагрузки введите: sudo reboot"
     fi
 else
-    echo "Для ручной перезагрузки введите: sudo reboot"
+    read -r -p "Перезагрузить сейчас? (y/n): " reboot_now
+    if [[ "$reboot_now" == "y" || "$reboot_now" == "Y" ]]; then
+        echo "Перезагрузка системы..."
+        # Пробуем разные способы перезагрузки
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl reboot
+        elif command -v shutdown >/dev/null 2>&1; then
+            shutdown -r now
+        else
+            reboot
+        fi
+    else
+        echo "Для ручной перезагрузки введите: sudo reboot"
+    fi
 fi
