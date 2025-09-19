@@ -282,14 +282,14 @@ select_components() {
         select_option "Docker и Docker Compose" "INSTALL_DOCKER" "$docker_installed"
     fi
     
-    timezone_set=false
     current_timezone=$(timedatectl show --property=Timezone --value)
     if [ -n "$current_timezone" ]; then
-        timezone_set=true
-        echo -e "\033[0;32m✓ Часовой пояс (текущий: $current_timezone)\033[0m"
+        echo -e "  Текущий часовой пояс: \033[1;34m$current_timezone\033[0m"
+        timezone_option="Настройка часового пояса (текущий: $current_timezone)"
     else
-        select_option "Настройка часового пояса" "SETUP_TIMEZONE" "$timezone_set"
+        timezone_option="Настройка часового пояса"
     fi
+    select_option "$timezone_option" "SETUP_TIMEZONE" "false"
     
     # Проверка статуса русской локали
     locales_set=false
