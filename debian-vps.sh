@@ -77,6 +77,46 @@ print_color() {
     echo -e "${color}$2\033[0m"
 }
 
+# Экранирование специальных символов для sed
+escape_sed_pattern() {
+    printf '%s' "$1" | sed 's/[.[\*^$(){}?+|\\/-]/\\&/g'
+}
+
+# Обеспечивает наличие указанной локали в системе
+ensure_locale() {
+    local locale_name="$1"
+    local charset="${2:-UTF-8}"
+
+    if [ -z "$locale_name" ]; then
+        return 1
+    fi
+
+    if locale -a 2>/dev/null | grep -iq "^${locale_name}$"; then
+        return 0
+    fi
+
+    if [ ! -f /etc/locale.gen ]; then
+        return 1
+    fi
+
+    local escaped
+    escaped="$(escape_sed_pattern "$locale_name")"
+
+    if grep -iq "^${locale_name}[[:space:]]" /etc/locale.gen; then
+        sed -i -E "s/^# *${escaped}[[:space:]]+/${locale_name} /I" /etc/locale.gen
+    else
+        printf '%s %s\n' "$locale_name" "$charset" >> /etc/locale.gen
+    fi
+
+    locale-gen "$locale_name" >/dev/null 2>&1 || return 1
+
+    if locale -a 2>/dev/null | grep -iq "^${locale_name}$"; then
+        return 0
+    fi
+
+    return 1
+}
+
 # Переменные для выбора компонентов
 UPDATE_SYSTEM=false
 INSTALL_BASE_UTILS=false
@@ -102,6 +142,29 @@ INSTALL_FISH=false
 # Инициализация переменных
 new_username=""
 ssh_key_added=false
+xanmod_installed=false
+kernel_variant=""
+xanmod_installed_version=""
+
+# Текущая локаль системы для последующего использования (fish, оболочка)
+SYSTEM_LOCALE_DEFAULT="$(locale 2>/dev/null | awk -F= '/^LANG=/{print $2}' | tail -n1)"
+if [ -z "$SYSTEM_LOCALE_DEFAULT" ] || [ "$SYSTEM_LOCALE_DEFAULT" = "C" ] || [ "$SYSTEM_LOCALE_DEFAULT" = "POSIX" ]; then
+    SYSTEM_LOCALE_DEFAULT="en_US.UTF-8"
+fi
+
+# Набор пакетов мониторинга с учетом версии Debian.
+
+# Набор пакетов мониторинга с учетом версии Debian.
+# На Debian 12 пакет iperf3 не предоставляет полноценный systemd unit, из-за чего
+# во время установки появляются ошибки update-rc.d/deb-systemd-helper.
+# Пропускаем iperf3 на Debian 12, чтобы избежать шумных ошибок.
+MONITORING_PACKAGES=(sysstat atop nmon smartmontools lm-sensors)
+MONITORING_IPERF3_SUPPORTED=true
+if [ "$DEBIAN_VERSION_MAJOR" -ge 13 ]; then
+    MONITORING_PACKAGES+=(iperf3)
+else
+    MONITORING_IPERF3_SUPPORTED=false
+fi
 
 # Функция для выбора компонентов
 select_components() {
@@ -214,7 +277,16 @@ select_components() {
     # Проверка установки XanMod ядра
     if uname -r | grep -q "xanmod"; then
         xanmod_installed=true
-        echo -e "\033[0;32m✓ Ядро XanMod (уже установлено: $(uname -r))\033[0m"
+        current_kernel_full="$(uname -r)"
+        echo -e "\033[0;32m✓ Ядро XanMod (уже установлено: ${current_kernel_full})\033[0m"
+        xanmod_installed_version=$(dpkg-query -W -f='${Version}' linux-xanmod 2>/dev/null)
+        if [ -z "$xanmod_installed_version" ]; then
+            xanmod_installed_version=$(dpkg -l 'linux-xanmod*' 2>/dev/null | awk '/^ii/{print $3; exit}')
+        fi
+        detected_variant=$(echo "$current_kernel_full" | sed -n 's/.*-\(x64v[0-9]\)-xanmod.*/\1/p')
+        if [ -n "$detected_variant" ]; then
+            kernel_variant="$detected_variant"
+        fi
     else
         xanmod_installed=false
         select_option "Установка оптимизированного ядра XanMod" "INSTALL_XANMOD" "$xanmod_installed"
@@ -261,8 +333,8 @@ select_components() {
     fi
     
     monitoring_installed=true
-    for util in sysstat atop iperf3; do
-        if ! is_installed $util; then
+    for util in "${MONITORING_PACKAGES[@]}"; do
+        if ! is_installed "$util"; then
             monitoring_installed=false
             break
         fi
@@ -271,6 +343,9 @@ select_components() {
     if [ "$monitoring_installed" = true ]; then
         echo -e "\033[0;32m✓ Инструменты мониторинга (уже установлены)\033[0m"
     else
+        if [ "$MONITORING_IPERF3_SUPPORTED" = false ]; then
+            print_color "yellow" "Примечание: iperf3 пропускается на ${DEBIAN_VERSION_HUMAN} из-за отсутствия системного сервиса."
+        fi
         select_option "Инструменты мониторинга" "INSTALL_MONITORING" "$monitoring_installed"
     fi
     
@@ -447,6 +522,9 @@ select_components_noninteractive() {
         echo -e "\033[0;32m✓ Инструменты мониторинга (включено)\033[0m"
     else
         echo -e "\033[0;33m○ Инструменты мониторинга (отключено)\033[0m"
+    fi
+    if [ "$MONITORING_IPERF3_SUPPORTED" = false ]; then
+        echo -e "  \033[0;33mПримечание: iperf3 не будет установлен автоматически на ${DEBIAN_VERSION_HUMAN}.\033[0m"
     fi
     
     # Docker
@@ -880,7 +958,8 @@ if [ "$INSTALL_XANMOD" = true ]; then
     if [ $? -eq 0 ]; then
         print_color "green" "✓ Ядро XanMod успешно установлено"
         # Получаем информацию о установленной версии
-        xanmod_version=$(apt-cache policy linux-xanmod-$kernel_variant | grep Installed | awk '{print $2}')
+        xanmod_version=$(dpkg-query -W -f='${Version}' linux-xanmod-$kernel_variant 2>/dev/null)
+        xanmod_installed_version="$xanmod_version"
         print_color "green" "✓ Установленная версия: $xanmod_version"
         print_color "yellow" "⚠ Для применения нового ядра потребуется перезагрузка системы"
         xanmod_installed=true
@@ -893,7 +972,9 @@ if [ "$INSTALL_XANMOD" = true ]; then
         
         if [ $? -eq 0 ]; then
             print_color "green" "✓ Стандартное ядро XanMod успешно установлено"
-            xanmod_version=$(apt-cache policy linux-xanmod | grep Installed | awk '{print $2}')
+            xanmod_version=$(dpkg-query -W -f='${Version}' linux-xanmod 2>/dev/null)
+            kernel_variant="standard"
+            xanmod_installed_version="$xanmod_version"
             print_color "green" "✓ Установленная версия: $xanmod_version"
             print_color "yellow" "⚠ Для применения нового ядра потребуется перезагрузка системы"
             xanmod_installed=true
@@ -1043,25 +1124,33 @@ fi
 if [ "$SETUP_LOCALES" = true ]; then
     step "Настройка локалей"
     apt install -y locales
+    ensure_locale "ru_RU.UTF-8"
+    ensure_locale "en_US.UTF-8"
 
-    # Настройка локалей
-    sed -i 's/# ru_RU.UTF-8 UTF-8/ru_RU.UTF-8 UTF-8/' /etc/locale.gen
-    sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
-    locale-gen
-
-    # Предложение выбора локали по умолчанию
     echo "Выберите локаль по умолчанию:"
     echo "1) Русская (ru_RU.UTF-8)"
     echo "2) Английская (en_US.UTF-8)"
     read -r -p "Выберите локаль (1/2): " locale_choice
-    
-    if [ "$locale_choice" = "1" ]; then
-        update-locale LANG=ru_RU.UTF-8 LC_ALL=ru_RU.UTF-8
-        echo "Установлена русская локаль по умолчанию (ru_RU.UTF-8)"
-    else
-        update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
-        echo "Установлена английская локаль по умолчанию (en_US.UTF-8)"
-    fi
+
+    case "$locale_choice" in
+        1)
+            if ensure_locale "ru_RU.UTF-8" && update-locale LANG=ru_RU.UTF-8 LC_ALL=ru_RU.UTF-8; then
+                SYSTEM_LOCALE_DEFAULT="ru_RU.UTF-8"
+                echo "Установлена русская локаль по умолчанию (ru_RU.UTF-8)"
+            else
+                print_color "yellow" "Не удалось активировать ru_RU.UTF-8, используется en_US.UTF-8"
+                ensure_locale "en_US.UTF-8"
+                update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+                SYSTEM_LOCALE_DEFAULT="en_US.UTF-8"
+            fi
+            ;;
+        *)
+            ensure_locale "en_US.UTF-8"
+            update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+            SYSTEM_LOCALE_DEFAULT="en_US.UTF-8"
+            echo "Установлена английская локаль по умолчанию (en_US.UTF-8)"
+            ;;
+    esac
 fi
 
 # 13. Настройка logrotate для лог-файлов
@@ -1193,9 +1282,12 @@ fi
 # 16. Установка дополнительных инструментов мониторинга
 if [ "$INSTALL_MONITORING" = true ]; then
     step "Установка инструментов мониторинга"
-    apt install -y \
-        sysstat atop iperf3 nmon \
-        smartmontools lm-sensors
+    apt install -y "${MONITORING_PACKAGES[@]}"
+
+    if [ "$MONITORING_IPERF3_SUPPORTED" = false ]; then
+        print_color "yellow" "iperf3 не устанавливается автоматически на ${DEBIAN_VERSION_HUMAN}."
+        print_color "yellow" "Вы можете установить его вручную при необходимости: apt install iperf3"
+    fi
 
     # Настройка сбора статистики sysstat
     if [ -f /etc/default/sysstat ]; then
@@ -1277,6 +1369,16 @@ if [ "$INSTALL_FISH" = true ]; then
     step "Установка Starship prompt"
     curl -sS https://starship.rs/install.sh | sh -s -- -y
 
+    fish_locale="${SYSTEM_LOCALE_DEFAULT:-ru_RU.UTF-8}"
+    if ! ensure_locale "$fish_locale"; then
+        if ensure_locale "en_US.UTF-8"; then
+            fish_locale="en_US.UTF-8"
+        else
+            fish_locale="C.UTF-8"
+        fi
+        print_color "yellow" "Используется локаль $fish_locale для fish shell."
+    fi
+
     # --- Настройка для root ---
     # Создание директорий для конфигурации
     mkdir -p /root/.config/fish/functions
@@ -1285,8 +1387,8 @@ if [ "$INSTALL_FISH" = true ]; then
     # Основной config.fish для root
     cat > /root/.config/fish/config.fish << 'ROOT_CONFIG_EOF'
 # Настройки WSL Debian
-set -gx LANG ru_RU.UTF-8
-set -gx LC_ALL ru_RU.UTF-8
+set -gx LANG __FISH_LOCALE__
+set -gx LC_ALL __FISH_LOCALE__
 
 # Алиасы
 alias ll='ls -la'
@@ -1316,6 +1418,7 @@ set -gx FZF_CTRL_T_COMMAND $FZF_DEFAULT_COMMAND
 # Starship prompt
 starship init fish | source
 ROOT_CONFIG_EOF
+    sed -i "s|__FISH_LOCALE__|$fish_locale|g" /root/.config/fish/config.fish
 
     # Приветствие для root
     cat > /root/.config/fish/functions/fish_greeting.fish << 'ROOT_GREETING_EOF'
@@ -1363,8 +1466,8 @@ FISHER_ROOT_SCRIPT_EOF
         # Создаем временные файлы для конфигурации пользователя
         cat > /tmp/user_config.fish << 'USER_CONFIG_EOF'
 # Настройки WSL Debian
-set -gx LANG ru_RU.UTF-8
-set -gx LC_ALL ru_RU.UTF-8
+set -gx LANG __FISH_LOCALE__
+set -gx LC_ALL __FISH_LOCALE__
 
 # Алиасы
 alias ll='ls -la'
@@ -1394,6 +1497,7 @@ set -gx FZF_CTRL_T_COMMAND $FZF_DEFAULT_COMMAND
 # Starship prompt
 starship init fish | source
 USER_CONFIG_EOF
+        sed -i "s|__FISH_LOCALE__|$fish_locale|g" /tmp/user_config.fish
 
         cat > /tmp/user_greeting.fish << 'USER_GREETING_EOF'
 function fish_greeting
@@ -1482,12 +1586,19 @@ fi
 
 if [ "$INSTALL_XANMOD" = true ] && [ "$xanmod_installed" = true ]; then
     echo -e "\n\033[1;33mЯдро XanMod установлено. Для его активации требуется перезагрузка.\033[0m"
-    kernel_info="$(apt-cache policy linux-xanmod-*${kernel_variant}* 2>/dev/null | grep Installed | head -1 | awk '{print $2}')"
+    kernel_info="$xanmod_installed_version"
+    if [ -z "$kernel_info" ] && [ -n "$kernel_variant" ]; then
+        kernel_info=$(dpkg-query -W -f='${Version}' "linux-xanmod-$kernel_variant" 2>/dev/null)
+    fi
     if [ -z "$kernel_info" ]; then
-        kernel_info="$(apt-cache policy linux-xanmod 2>/dev/null | grep Installed | head -1 | awk '{print $2}')"
+        kernel_info=$(dpkg-query -W -f='${Version}' linux-xanmod 2>/dev/null)
     fi
     if [ -n "$kernel_info" ]; then
-        echo -e "\033[1;33mУстановленная версия: $kernel_info (тип: $kernel_variant)\033[0m"
+        variant_summary="$kernel_variant"
+        if [ -z "$variant_summary" ]; then
+            variant_summary="standard"
+        fi
+        echo -e "\033[1;33mУстановленная версия: $kernel_info (тип: $variant_summary)\033[0m"
     fi
     echo -e "\033[1;33mПосле перезагрузки можно проверить версию ядра командой: uname -r\033[0m"
 fi
