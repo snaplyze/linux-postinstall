@@ -12,6 +12,8 @@ fi
 # Пример использования: 
 # NONINTERACTIVE=true NEW_USERNAME=admin INSTALL_FISH=true curl -s https://raw.githubusercontent.com/snaplyze/linux-postinstall/main/debian-vps.sh | bash
 
+export DEBIAN_FRONTEND=${DEBIAN_FRONTEND:-noninteractive}
+
 # Определение версии Debian
 if [ -r /etc/os-release ]; then
     . /etc/os-release
@@ -77,6 +79,31 @@ print_color() {
     echo -e "${color}$2\033[0m"
 }
 
+# Проверяет наличие локали с учетом разных написаний
+locale_exists() {
+    local candidate input="$1"
+    if [ -z "$input" ]; then
+        return 1
+    fi
+
+    for candidate in \
+        "$input" \
+        "${input/.UTF-8/.utf8}" \
+        "${input/.utf8/.UTF-8}" \
+        "${input//-/_}" \
+        "${input/.UTF-8/.utf8//-/_}" \
+        "${input/.utf8/.UTF-8//-/_}"; do
+        if [ -z "$candidate" ]; then
+            continue
+        fi
+        if locale -a 2>/dev/null | grep -iq "^${candidate}$"; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 # Экранирование специальных символов для sed
 escape_sed_pattern() {
     printf '%s' "$1" | sed 's/[.[\*^$(){}?+|\\/-]/\\&/g'
@@ -91,7 +118,7 @@ ensure_locale() {
         return 1
     fi
 
-    if locale -a 2>/dev/null | grep -iq "^${locale_name}$"; then
+    if locale_exists "$locale_name"; then
         return 0
     fi
 
@@ -102,7 +129,7 @@ ensure_locale() {
     local escaped
     escaped="$(escape_sed_pattern "$locale_name")"
 
-    if grep -iq "^${locale_name}[[:space:]]" /etc/locale.gen; then
+    if grep -iq "^#? *${escaped}[[:space:]]" /etc/locale.gen; then
         sed -i -E "s/^# *${escaped}[[:space:]]+/${locale_name} /I" /etc/locale.gen
     else
         printf '%s %s\n' "$locale_name" "$charset" >> /etc/locale.gen
@@ -110,7 +137,7 @@ ensure_locale() {
 
     locale-gen "$locale_name" >/dev/null 2>&1 || return 1
 
-    if locale -a 2>/dev/null | grep -iq "^${locale_name}$"; then
+    if locale_exists "$locale_name"; then
         return 0
     fi
 
@@ -153,18 +180,7 @@ if [ -z "$SYSTEM_LOCALE_DEFAULT" ] || [ "$SYSTEM_LOCALE_DEFAULT" = "C" ] || [ "$
 fi
 
 # Набор пакетов мониторинга с учетом версии Debian.
-
-# Набор пакетов мониторинга с учетом версии Debian.
-# На Debian 12 пакет iperf3 не предоставляет полноценный systemd unit, из-за чего
-# во время установки появляются ошибки update-rc.d/deb-systemd-helper.
-# Пропускаем iperf3 на Debian 12, чтобы избежать шумных ошибок.
-MONITORING_PACKAGES=(sysstat atop nmon smartmontools lm-sensors)
-MONITORING_IPERF3_SUPPORTED=true
-if [ "$DEBIAN_VERSION_MAJOR" -ge 13 ]; then
-    MONITORING_PACKAGES+=(iperf3)
-else
-    MONITORING_IPERF3_SUPPORTED=false
-fi
+MONITORING_PACKAGES=(sysstat atop iperf3 nmon smartmontools lm-sensors)
 
 # Функция для выбора компонентов
 select_components() {
@@ -343,9 +359,6 @@ select_components() {
     if [ "$monitoring_installed" = true ]; then
         echo -e "\033[0;32m✓ Инструменты мониторинга (уже установлены)\033[0m"
     else
-        if [ "$MONITORING_IPERF3_SUPPORTED" = false ]; then
-            print_color "yellow" "Примечание: iperf3 пропускается на ${DEBIAN_VERSION_HUMAN} из-за отсутствия системного сервиса."
-        fi
         select_option "Инструменты мониторинга" "INSTALL_MONITORING" "$monitoring_installed"
     fi
     
@@ -522,9 +535,6 @@ select_components_noninteractive() {
         echo -e "\033[0;32m✓ Инструменты мониторинга (включено)\033[0m"
     else
         echo -e "\033[0;33m○ Инструменты мониторинга (отключено)\033[0m"
-    fi
-    if [ "$MONITORING_IPERF3_SUPPORTED" = false ]; then
-        echo -e "  \033[0;33mПримечание: iperf3 не будет установлен автоматически на ${DEBIAN_VERSION_HUMAN}.\033[0m"
     fi
     
     # Docker
@@ -1283,11 +1293,6 @@ fi
 if [ "$INSTALL_MONITORING" = true ]; then
     step "Установка инструментов мониторинга"
     apt install -y "${MONITORING_PACKAGES[@]}"
-
-    if [ "$MONITORING_IPERF3_SUPPORTED" = false ]; then
-        print_color "yellow" "iperf3 не устанавливается автоматически на ${DEBIAN_VERSION_HUMAN}."
-        print_color "yellow" "Вы можете установить его вручную при необходимости: apt install iperf3"
-    fi
 
     # Настройка сбора статистики sysstat
     if [ -f /etc/default/sysstat ]; then
