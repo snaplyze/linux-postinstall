@@ -9,8 +9,12 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # Поддержка неинтерактивного режима через переменные окружения
-# Пример использования: 
-# NONINTERACTIVE=true NEW_USERNAME=admin INSTALL_FISH=true curl -s https://raw.githubusercontent.com/snaplyze/linux-postinstall/main/debian-vps.sh | bash
+# Примеры запуска скрипта из интернета:
+#  - bash/zsh: bash <(curl -fsSL https://raw.githubusercontent.com/snaplyze/linux-postinstall/main/debian-vps.sh)
+#  - fish:  curl -fsSL https://raw.githubusercontent.com/snaplyze/linux-postinstall/main/debian-vps.sh | bash
+# Неинтерактивно (пример):
+#  NONINTERACTIVE=true NEW_USERNAME=admin INSTALL_FISH=true \
+#    curl -fsSL https://raw.githubusercontent.com/snaplyze/linux-postinstall/main/debian-vps.sh | bash
 
 export DEBIAN_FRONTEND=${DEBIAN_FRONTEND:-noninteractive}
 
@@ -1017,7 +1021,7 @@ if [ "$INSTALL_XANMOD" = true ]; then
     
     # Проверяем, установлен ли пакет inxi для системной информации
     if ! is_installed inxi; then
-        apt install -y inxi
+        apt install -y --no-install-recommends inxi
     fi
     
     if [ "$xanmod_installed" = true ]; then
@@ -1278,22 +1282,42 @@ if [ "$INSTALL_DOCKER" = true ]; then
             chmod a+r /etc/apt/keyrings/docker.gpg
         fi
         
-        # Добавляем репозиторий Docker
-        # Для Debian 13 (trixie) Docker репозиторий может быть недоступен сразу после релиза.
-        # Используем bookworm как fallback при необходимости.
-        DOCKER_CODENAME="$DEBIAN_CODENAME"
-        if [ "$DEBIAN_CODENAME" = "trixie" ]; then
-            DOCKER_CODENAME="bookworm"
+        # Добавляем репозиторий Docker с авто-выбором дистро: пробуем текущий codename, затем fallback на bookworm
+        docker_key="/etc/apt/keyrings/docker.gpg"
+        docker_list="/etc/apt/sources.list.d/docker.list"
+
+        try_docker_codename() {
+            local codename="$1"
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=${docker_key}] https://download.docker.com/linux/debian ${codename} stable" > "${docker_list}"
+            # Обновляем только этот источник, не затрагивая остальные
+            apt-get update -o Dir::Etc::sourcelist="${docker_list}" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
+        }
+
+        CHOSEN_DOCKER_CODENAME=""
+        if try_docker_codename "$DEBIAN_CODENAME"; then
+            CHOSEN_DOCKER_CODENAME="$DEBIAN_CODENAME"
+        elif [ "$DEBIAN_CODENAME" != "bookworm" ] && try_docker_codename "bookworm"; then
+            CHOSEN_DOCKER_CODENAME="bookworm"
+            print_color "yellow" "Docker репозиторий для ${DEBIAN_CODENAME} недоступен. Используем bookworm как fallback."
+        else
+            print_color "red" "Не удалось добавить репозиторий Docker для ${DEBIAN_CODENAME} или bookworm."
+            print_color "yellow" "Пропуск установки Docker."
+            INSTALL_DOCKER=false
         fi
-        cat > /etc/apt/sources.list.d/docker.list << EOF
-deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian ${DOCKER_CODENAME} stable
-EOF
+
+        if [ "$INSTALL_DOCKER" = false ]; then
+            :
+        else
+            echo "Используется репозиторий Docker для: ${CHOSEN_DOCKER_CODENAME}"
+        fi
         
-        # Обновляем пакетные списки
-        apt update
-        
-        # Устанавливаем Docker Engine и Docker Compose
-        apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+        # Устанавливаем Docker Engine и Docker Compose (если репозиторий успешно настроен)
+        if [ "$INSTALL_DOCKER" = true ]; then
+            apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+        else
+            # Перейти к следующему блоку, не падая
+            continue
+        fi
         
         # Проверяем, что Docker работает
         systemctl enable docker
@@ -1345,7 +1369,7 @@ fi
 # 16. Установка дополнительных инструментов мониторинга
 if [ "$INSTALL_MONITORING" = true ]; then
     step "Установка инструментов мониторинга"
-    apt install -y "${MONITORING_PACKAGES[@]}"
+    apt install -y --no-install-recommends "${MONITORING_PACKAGES[@]}"
 
     # Настройка сбора статистики sysstat
     if [ -f /etc/default/sysstat ]; then
@@ -1418,7 +1442,7 @@ EOF
     fi
 fi
 
-# 18. Полная настройка fish shell для root и пользователя (по примеру snaplyze/debian-wsl)
+# 18. Полная настройка fish shell для root и пользователя
 if [ "$INSTALL_FISH" = true ]; then
     step "Полная настройка fish shell (Fisher, плагины, fzf, fd, bat, Starship, автодополнения Docker)"
 
@@ -1427,7 +1451,7 @@ if [ "$INSTALL_FISH" = true ]; then
 
     # Установка Starship глобально (для всех пользователей)
     step "Установка Starship prompt"
-    curl -sS https://starship.rs/install.sh | sh -s -- -y
+    curl -fsSL --connect-timeout 15 --retry 3 https://starship.rs/install.sh | sh -s -- -y
 
     fish_locale="${SYSTEM_LOCALE_DEFAULT:-ru_RU.UTF-8}"
     if ! ensure_locale "$fish_locale"; then
@@ -1444,9 +1468,9 @@ if [ "$INSTALL_FISH" = true ]; then
     mkdir -p /root/.config/fish/functions
     mkdir -p /root/.config/fish/completions
 
-    # Основной config.fish для root
+# Основной config.fish для root
     cat > /root/.config/fish/config.fish << 'ROOT_CONFIG_EOF'
-# Настройки WSL Debian
+# Настройки Debian
 set -gx LANG __FISH_LOCALE__
 set -gx LC_ALL __FISH_LOCALE__
 
@@ -1475,6 +1499,20 @@ set fish_autosuggestion_enabled 1
 set -gx FZF_DEFAULT_COMMAND 'fd --type f --strip-cwd-prefix 2>/dev/null || find . -type f'
 set -gx FZF_CTRL_T_COMMAND $FZF_DEFAULT_COMMAND
 
+# Утилиты для запуска bash-команд из fish
+function b --description 'Run command in bash -lc'
+    set -l cmd (string join ' ' -- $argv)
+    bash -lc "$cmd"
+end
+
+function bcurl --description 'Download URL and run via bash'
+    if test (count $argv) -lt 1
+        echo 'Usage: bcurl <url>'
+        return 1
+    end
+    curl -fsSL $argv[1] | bash
+end
+
 # Starship prompt
 starship init fish | source
 ROOT_CONFIG_EOF
@@ -1483,14 +1521,14 @@ ROOT_CONFIG_EOF
     # Приветствие для root
     cat > /root/.config/fish/functions/fish_greeting.fish << 'ROOT_GREETING_EOF'
 function fish_greeting
-    echo "🐧 WSL Debian [ROOT] - "(date '+%Y-%m-%d %H:%M')""
+    echo "🐧 Debian [ROOT] - "(date '+%Y-%m-%d %H:%M')""
 end
 ROOT_GREETING_EOF
 
     # Автодополнения Docker для root
     mkdir -p /root/.config/fish/completions
-    curl -sL https://raw.githubusercontent.com/docker/cli/master/contrib/completion/fish/docker.fish -o /root/.config/fish/completions/docker.fish
-    curl -sL https://raw.githubusercontent.com/docker/compose/master/contrib/completion/fish/docker-compose.fish -o /root/.config/fish/completions/docker-compose.fish
+    curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/docker/cli/master/contrib/completion/fish/docker.fish -o /root/.config/fish/completions/docker.fish || true
+    curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/docker/compose/master/contrib/completion/fish/docker-compose.fish -o /root/.config/fish/completions/docker-compose.fish || true
 
     # Установка Fisher и плагинов для root
     step "Установка Fisher и плагинов для root"
@@ -1499,7 +1537,7 @@ ROOT_GREETING_EOF
     cat > /tmp/install_fisher_root.fish << 'FISHER_ROOT_SCRIPT_EOF'
 #!/usr/bin/env fish
 # Установка Fisher и плагинов для root
-curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
+curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
 fisher install jorgebucaran/fisher
 fisher install jethrokuan/z
 fisher install PatrickF1/fzf.fish
@@ -1523,9 +1561,9 @@ FISHER_ROOT_SCRIPT_EOF
         su - $new_username -c "mkdir -p ~/.config/fish/functions"
         su - $new_username -c "mkdir -p ~/.config/fish/completions"
 
-        # Создаем временные файлы для конфигурации пользователя
+# Создаем временные файлы для конфигурации пользователя
         cat > /tmp/user_config.fish << 'USER_CONFIG_EOF'
-# Настройки WSL Debian
+# Настройки Debian
 set -gx LANG __FISH_LOCALE__
 set -gx LC_ALL __FISH_LOCALE__
 
@@ -1554,6 +1592,20 @@ set fish_autosuggestion_enabled 1
 set -gx FZF_DEFAULT_COMMAND 'fd --type f --strip-cwd-prefix 2>/dev/null || find . -type f'
 set -gx FZF_CTRL_T_COMMAND $FZF_DEFAULT_COMMAND
 
+# Утилиты для запуска bash-команд из fish
+function b --description 'Run command in bash -lc'
+    set -l cmd (string join ' ' -- $argv)
+    bash -lc "$cmd"
+end
+
+function bcurl --description 'Download URL and run via bash'
+    if test (count $argv) -lt 1
+        echo 'Usage: bcurl <url>'
+        return 1
+    end
+    curl -fsSL $argv[1] | bash
+end
+
 # Starship prompt
 starship init fish | source
 USER_CONFIG_EOF
@@ -1561,7 +1613,7 @@ USER_CONFIG_EOF
 
         cat > /tmp/user_greeting.fish << 'USER_GREETING_EOF'
 function fish_greeting
-    echo "🐧 WSL Debian - "(date '+%Y-%m-%d %H:%M')""
+    echo "🐧 Debian - "(date '+%Y-%m-%d %H:%M')""
 end
 USER_GREETING_EOF
 
@@ -1574,8 +1626,8 @@ USER_GREETING_EOF
         rm -f /tmp/user_config.fish /tmp/user_greeting.fish
 
         # Автодополнения Docker для пользователя
-        su - $new_username -c "curl -sL https://raw.githubusercontent.com/docker/cli/master/contrib/completion/fish/docker.fish -o ~/.config/fish/completions/docker.fish"
-        su - $new_username -c "curl -sL https://raw.githubusercontent.com/docker/compose/master/contrib/completion/fish/docker-compose.fish -o ~/.config/fish/completions/docker-compose.fish"
+        su - $new_username -c "curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/docker/cli/master/contrib/completion/fish/docker.fish -o ~/.config/fish/completions/docker.fish || true"
+        su - $new_username -c "curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/docker/compose/master/contrib/completion/fish/docker-compose.fish -o ~/.config/fish/completions/docker-compose.fish || true"
 
         # Установка Fisher и плагинов для пользователя
         step "Установка Fisher и плагинов для пользователя $new_username"
@@ -1584,7 +1636,7 @@ USER_GREETING_EOF
         cat > /tmp/install_fisher.sh << 'FISHER_SCRIPT_EOF'
 #!/usr/bin/env fish
 # Установка Fisher и плагинов
-curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
+curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
 fisher install jorgebucaran/fisher
 fisher install jethrokuan/z
 fisher install PatrickF1/fzf.fish
