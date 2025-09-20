@@ -20,7 +20,7 @@ export DEBIAN_FRONTEND=${DEBIAN_FRONTEND:-noninteractive}
 
 # Определение версии Debian
 if [ -r /etc/os-release ]; then
-    . /etc/os-releaseьшс
+    . /etc/os-release
 else
     echo "Не удалось определить версию операционной системы"
     exit 1
