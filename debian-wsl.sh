@@ -176,6 +176,8 @@ ensure_debian_base_repos() {
 
 # --- Переменные режима и окружения ---
 NONINTERACTIVE=${NONINTERACTIVE:-false}
+# Флаг глобальной установки Starship (true/false)
+STARSHIP_GLOBAL_INSTALL=${STARSHIP_GLOBAL_INSTALL:-true}
 NEW_USERNAME=${NEW_USERNAME:-""}
 NEW_PASSWORD=${NEW_PASSWORD:-""}
 WSL_DEFAULT_USER=${WSL_DEFAULT_USER:-""}
@@ -242,7 +244,18 @@ create_user() {
         else
             read -r -p "Сменить пароль для '$new_user'? (y/N): " chpass < /dev/tty
             if [[ "$chpass" == "y" || "$chpass" == "Y" ]]; then
-                passwd "$new_user" < /dev/tty || true
+                attempts=0
+                while true; do
+                    if passwd "$new_user" < /dev/tty; then
+                        break
+                    fi
+                    attempts=$((attempts+1))
+                    if [ $attempts -ge 3 ]; then
+                        print_color "yellow" "Пароль не изменен после 3 неудачных попыток."
+                        break
+                    fi
+                    print_color "yellow" "Пароли не совпали или ошибка. Повторите попытку."
+                done
             fi
         fi
 
@@ -288,7 +301,18 @@ create_user() {
             fi
         else
             print_color "yellow" "Установите пароль для пользователя '$new_user':"
-            passwd "$new_user" < /dev/tty
+            attempts=0
+            while true; do
+                if passwd "$new_user" < /dev/tty; then
+                    break
+                fi
+                attempts=$((attempts+1))
+                if [ $attempts -ge 3 ]; then
+                    print_color "yellow" "Пароль не установлен после 3 неудачных попыток."
+                    break
+                fi
+                print_color "yellow" "Пароли не совпали или ошибка. Повторите попытку."
+            done
         fi
 
         print_color "yellow" "Настраиваем sudo без пароля для '$new_user'..."
@@ -463,13 +487,22 @@ EOL
 # 5. Установка компонентов NVIDIA
 install_nvidia() {
     step "5. Установка компонентов NVIDIA для WSL"
-    print_color "yellow" "Добавляем GPG-ключ и репозиторий NVIDIA Container Toolkit..."
-    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-    curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-        sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-        tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
+    print_color "yellow" "Подготавливаем зависимости (ca-certificates, curl, gnupg)..."
+    apt-get update -y >/dev/null 2>&1 || true
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg >/dev/null 2>&1 || true
 
-    apt-get update
+    print_color "yellow" "Добавляем GPG-ключ и репозиторий NVIDIA Container Toolkit..."
+    install -m 0755 -d /usr/share/keyrings
+    if curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg; then
+        curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+            sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+            tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
+    else
+        print_color "red" "Не удалось импортировать GPG-ключ NVIDIA (gnupg/curl). Пропускаем установку NVIDIA."
+        return 1
+    fi
+
+    apt-get update || true
     print_color "yellow" "Устанавливаем NVIDIA Container Toolkit..."
     apt-get install -y nvidia-container-toolkit
 
@@ -502,6 +535,7 @@ install_nvidia() {
 install_base_utils() {
     step "6. Установка базовых утилит"
     apt-get install -y \
+        curl \
         nano \
         python3 \
         python3-pip \
@@ -518,9 +552,9 @@ install_base_utils() {
     print_color "green" "Базовые утилиты установлены."
 }
 
-# 7. Настройка Fish Shell
+# 7. Настройка Fish Shell (устойчивый режим)
 setup_fish() {
-    step "7. Настройка Fish Shell для пользователя и root"
+    step "7. Настройка Fish Shell (устойчивый режим)"
     local target_user
     if [ "$NONINTERACTIVE" = true ]; then
         target_user="${FISH_USER:-$DEFAULT_USER}"
@@ -528,47 +562,68 @@ setup_fish() {
     else
         print_color "yellow" "Введите имя пользователя для настройки Fish (например, $DEFAULT_USER):"
         read -r target_user < /dev/tty
-        if [ -z "$target_user" ]; then
-            target_user=$DEFAULT_USER
-        fi
+        [ -z "$target_user" ] && target_user=$DEFAULT_USER
     fi
 
     if ! id "$target_user" &>/dev/null; then
-        print_color "red" "Пользователь '$target_user' не найден. Пропускаем настройку для пользователя."
+        print_color "red" "Пользователь '$target_user' не найден. Пропускаем."
         return 1
     fi
 
     print_color "yellow" "Устанавливаем Fish..."
-    apt-get install -y fish
+    apt-get install -y fish curl || true
 
-    # Настройка для пользователя
+    if [ "${STARSHIP_GLOBAL_INSTALL:-true}" = true ] && ! command -v starship >/dev/null 2>&1; then
+        print_color "yellow" "Устанавливаем Starship глобально..."
+        curl -fsSL --connect-timeout 15 --retry 3 https://starship.rs/install.sh | sh -s -- -y || true
+    fi
+
+    # Пользователь
     print_color "yellow" "Настраиваем Fish для пользователя '$target_user'..."
-    runuser -u $target_user -- bash -c "\
-        mkdir -p ~/.config/fish/{functions,completions}; \
-        echo '# --- Fish Shell Config ---' > ~/.config/fish/config.fish; \
-        echo 'set -U fish_greeting' >> ~/.config/fish/config.fish; \
-        echo \"alias ll='ls -la'\" >> ~/.config/fish/config.fish; \
-        echo \"alias cat='batcat --paging=never'\" >> ~/.config/fish/config.fish; \
-        echo \"alias fd='fdfind'\" >> ~/.config/fish/config.fish; \
-        echo 'starship init fish | source' >> ~/.config/fish/config.fish; \
-        curl -sS https://starship.rs/install.sh | sh -s -- -y; \
-        fish -c 'curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher'; \
-        fish -c 'fisher install jethrokuan/z PatrickF1/fzf.fish jorgebucaran/autopair.fish franciscolourenco/done edc/bass'; \
-        cat > ~/.config/fish/functions/fish_greeting.fish << 'EOF'\nfunction fish_greeting\n    echo \"🐧 Debian - \"(date '+%Y-%m-%d %H:%M')\nend\nEOF\n; \
-    "
-    chsh -s /usr/bin/fish $target_user
+    runuser -u "$target_user" -- bash -c 'mkdir -p ~/.config/fish/{functions,completions}'
+    runuser -u "$target_user" -- tee "/home/$target_user/.config/fish/config.fish" >/dev/null <<'FISHCFG'
+# --- Fish Shell Config (WSL) ---
+set -U fish_greeting
+alias ll 'ls -la'
+alias cat 'batcat --paging=never'
+alias fd 'fdfind'
+if type -q starship
+    starship init fish | source
+end
+FISHCFG
+    runuser -u "$target_user" -- fish -c "curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source; fisher install jorgebucaran/fisher" || true
+    runuser -u "$target_user" -- fish -c "fisher install jethrokuan/z PatrickF1/fzf.fish jorgebucaran/autopair.fish franciscolourenco/done edc/bass" || true
+    runuser -u "$target_user" -- tee "/home/$target_user/.config/fish/functions/fish_greeting.fish" >/dev/null <<'FISHGREET_USER'
+function fish_greeting
+    echo "🐧 Debian - "(date '+%Y-%m-%d %H:%M')
+end
+FISHGREET_USER
+    runuser -u "$target_user" -- bash -lc "mkdir -p ~/.config/fish/completions; \
+        curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/docker/cli/master/contrib/completion/fish/docker.fish -o ~/.config/fish/completions/docker.fish || true; \
+        curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/docker/compose/master/contrib/completion/fish/docker-compose.fish -o ~/.config/fish/completions/docker-compose.fish || true"
+    chsh -s /usr/bin/fish "$target_user" || true
 
-    # Настройка для root
+    # Root
     print_color "yellow" "Настраиваем Fish для root..."
-    mkdir -p /root/.config/fish/functions
-    cp -r /home/$target_user/.config/fish/ /root/.config/
-    # Свой greeting для root
-    cat > /root/.config/fish/functions/fish_greeting.fish << 'EOF'
+    mkdir -p /root/.config/fish/{functions,completions}
+    cat > /root/.config/fish/config.fish <<'ROOTCFG'
+# --- Fish Shell Config (WSL, root) ---
+set -U fish_greeting
+alias ll 'ls -la'
+alias cat 'batcat --paging=never'
+alias fd 'fdfind'
+if type -q starship
+    starship init fish | source
+end
+ROOTCFG
+    cat > /root/.config/fish/functions/fish_greeting.fish <<'ROOTGREETING'
 function fish_greeting
     echo "🐧 Debian [ROOT] - "(date '+%Y-%m-%d %H:%M')
 end
-EOF
-    chsh -s /usr/bin/fish root
+ROOTGREETING
+    curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/docker/cli/master/contrib/completion/fish/docker.fish -o /root/.config/fish/completions/docker.fish || true
+    curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/docker/compose/master/contrib/completion/fish/docker-compose.fish -o /root/.config/fish/completions/docker-compose.fish || true
+    chsh -s /usr/bin/fish root || true
 
     print_color "green" "Fish Shell настроен для '$target_user' и root."
 }
@@ -634,18 +689,6 @@ select_components() {
     # Удалено PS3-меню. Вызываем новое меню и выходим.
     select_components_v2
     return
-    clear
-    print_color "blue" "╔══════════════════════════════════════╗"
-    print_color "blue" "║  Скрипт настройки ${DEBIAN_VERSION_HUMAN} (WSL)  ║"
-    print_color "blue" "╚══════════════════════════════════════╝"
-    echo
-    print_color "yellow" "Этот скрипт поможет вам настроить основные компоненты системы."
-    print_color "yellow" "Перед началом убедитесь, что в PowerShell выполнены команды:"
-    print_color "yellow" "1. wsl --update"
-    print_color "yellow" "2. wsl --set-default-version 2"
-    print_color "yellow" "3. Создан файл C:\Users\<USER>\.wslconfig с настройками памяти/CPU."
-    echo
-
 }
 
 # Меню в стиле VPS (Y/N по каждой опции)
