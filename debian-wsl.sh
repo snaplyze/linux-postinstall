@@ -163,9 +163,20 @@ if ! $NO_MENU; then
   fi
 fi
 
+is_installed() { dpkg -l 2>/dev/null | awk '{print $1,$2}' | grep -q "^ii ${1}$"; }
+
 show_menu_and_set_flags() {
+  clear
+  local codename_title; codename_title="${VERSION_CODENAME^}"
+  echo -e "\033[0;34m╔═════════════════════════════════════════╗\033[0m"
+  printf "\033[0;34m║ %-37s ║\033[0m\n" "НАСТРОЙКА: Debian ${VERSION_ID:-?} (${codename_title:-?})"
+  echo -e "\033[0;34m╚═════════════════════════════════════════╝\033[0m"
   echo
-  echo "Интерактивное меню настройки (Y/n):"
+  echo -e "\033[0;33mПеред началом в PowerShell:\033[0m"
+  echo -e "\033[0;33m1) wsl --update; 2) wsl --set-default-version 2;\033[0m"
+  echo -e "\033[0;33m3) Проверьте C:\\Users\\<USER>\\.wslconfig (RAM/CPU).\033[0m"
+  echo
+
   prompt_yn() {
     local prompt="$1" default_yes="$2"; local ans
     if $default_yes; then
@@ -176,41 +187,116 @@ show_menu_and_set_flags() {
       case "$ans" in y|Y) return 0;; *) return 1;; esac
     fi
   }
-  # WSL conf
-  if prompt_yn "Включить systemd в /etc/wsl.conf" false; then CONFIGURE_WSL_CONF=true; fi
-  # Обновление системы
-  if prompt_yn "Обновить систему и репозитории (apt update/upgrade)" true; then DO_UPDATE_SYSTEM=true; fi
-  # Базовые утилиты
-  if prompt_yn "Установить базовые утилиты (git, build-essential, fzf, bat, ripgrep и др.)" true; then DO_BASE_UTILS=true; fi
-  # Создание пользователя
-  if prompt_yn "Создать нового пользователя с sudo" false; then DO_CREATE_USER=true; fi
-  # Локали
-  if prompt_yn "Настроить локали (ru_RU, en_US)" false; then DO_LOCALES=true; fi
-  # Часовой пояс
-  if prompt_yn "Настроить часовой пояс" false; then DO_TIMEZONE=true; fi
-  # ssh-agent
-  if prompt_yn "Настроить ssh-agent" true; then DO_SSH_AGENT=true; else DO_SSH_AGENT=false; fi
-  # Docker
-  if prompt_yn "Установить Docker CE" true; then DO_INSTALL_DOCKER=true; else DO_INSTALL_DOCKER=false; fi
-  # Rootless
-  if prompt_yn "Включить rootless Docker" false; then ENABLE_ROOTLESS=true; fi
-  # NVIDIA toolkit
-  if prompt_yn "Установить NVIDIA Container Toolkit" true; then DO_NVIDIA_TOOLKIT=true; else DO_NVIDIA_TOOLKIT=false; fi
-  # CUDA
-  if prompt_yn "Установить CUDA Toolkit" false; then
-    INSTALL_CUDA=true
-    if prompt_yn "Выбрать самую свежую версию CUDA (auto-latest)" true; then
-      CUDA_AUTO_LATEST=true
-    else
-      if [ -r /dev/tty ]; then read -r -p "   Укажите версию CUDA (например, 12.5): " CUDA_VERSION < /dev/tty; else read -r CUDA_VERSION; fi
+
+  select_option() {
+    local option="$1" var_name="$2" already="$3"
+    if [ "$already" = true ]; then
+      echo -e "\033[0;32m✓ $option (уже настроено)\033[0m"; return 0
     fi
+    if [ "${!var_name}" = true ]; then
+      if prompt_yn "$option" true; then eval "$var_name=true"; echo -e "  \033[0;32m✓ Выбрано\033[0m"; else eval "$var_name=false"; echo "  ○ Пропущено"; fi
+    else
+      if prompt_yn "$option" false; then eval "$var_name=true"; echo -e "  \033[0;32m✓ Выбрано\033[0m"; else eval "$var_name=false"; echo "  ○ Пропущено"; fi
+    fi
+  }
+
+  echo -e "\033[0;34m═════════════════════════════════════════\033[0m"
+  echo -e "\033[0;34m  ВЫБОР КОМПОНЕНТОВ\033[0m"
+  echo -e "\033[0;34m═════════════════════════════════════════\033[0m"
+  echo
+
+  # Обновление системы — показать ✓ если обновлялось < 24ч назад
+  local apt_update_time current_time time_diff
+  apt_update_time=$(stat -c %Y /var/cache/apt/pkgcache.bin 2>/dev/null || echo 0)
+  current_time=$(date +%s)
+  time_diff=$((current_time - apt_update_time))
+  if [ $time_diff -lt 86400 ]; then
+    echo -e "\033[0;32m✓ Обновление системы (менее 24ч назад)\033[0m"
+  else
+    select_option "Обновление системы" DO_UPDATE_SYSTEM false
   fi
-  # Fish shell
-  if prompt_yn "Настроить Fish Shell (Fisher, Starship, плагины)" false; then DO_FISH=true; fi
-  # Автообновления безопасности
-  if prompt_yn "Включить автообновления безопасности (unattended-upgrades)" false; then DO_UNATTENDED_UPDATES=true; fi
+
+  # Базовые утилиты
+  local base_utils_installed=true
+  for util in curl wget htop git nano; do if ! is_installed "$util" && ! command -v "$util" >/dev/null 2>&1; then base_utils_installed=false; break; fi; done
+  if [ "$base_utils_installed" = true ]; then
+    echo -e "\033[0;32m✓ Базовые утилиты (уже установлены)\033[0m"
+  else
+    select_option "Базовые утилиты (git, build-essential, fzf, bat и др.)" DO_BASE_UTILS false
+  fi
+
+  # Создание пользователя
+  select_option "Создать нового пользователя с правами sudo" DO_CREATE_USER false
+
+  # Локали
+  if locale -a 2>/dev/null | grep -qi '^ru_RU\.utf8$'; then
+    echo -e "\033[0;32m✓ Локали (ru_RU уже есть)\033[0m"
+  else
+    select_option "Настроить локали (ru_RU, en_US)" DO_LOCALES false
+  fi
+
+  # Часовой пояс
+  local current_tz; current_tz="$(timedatectl show --property=Timezone --value 2>/dev/null || true)"
+  [ -n "$current_tz" ] && echo -e "  Текущий часовой пояс: \033[1;34m$current_tz\033[0m"
+  select_option "Настроить часовой пояс" DO_TIMEZONE false
+
+  # wsl.conf (systemd)
+  if [ -f /etc/wsl.conf ] && grep -q "systemd=true" /etc/wsl.conf 2>/dev/null; then
+    echo -e "\033[0;32m✓ wsl.conf (systemd включен)\033[0m"
+  else
+    select_option "Создать /etc/wsl.conf (systemd, пользователь по умолчанию)" CONFIGURE_WSL_CONF false
+  fi
+
+  # ssh-agent
+  select_option "Настроить ssh-agent" DO_SSH_AGENT true
+
+  # Docker
+  if is_installed docker-ce || command -v docker >/dev/null 2>&1; then
+    echo -e "\033[0;32m✓ Docker (уже установлен)\033[0m"
+  else
+    select_option "Установить Docker CE" DO_INSTALL_DOCKER false
+  fi
+
+  # Rootless Docker
+  select_option "Включить Rootless Docker" ENABLE_ROOTLESS false
+
+  # NVIDIA + CUDA (единый пункт как в старом меню)
+  if prompt_yn "Установить компоненты NVIDIA (Container Toolkit, CUDA)" false; then
+    DO_NVIDIA_TOOLKIT=true
+    if prompt_yn "  → Установить также CUDA Toolkit" true; then
+      INSTALL_CUDA=true
+      if prompt_yn "    → Выбрать самую свежую версию CUDA (auto-latest)" true; then
+        CUDA_AUTO_LATEST=true
+      else
+        if [ -r /dev/tty ]; then read -r -p "    → Укажите версию CUDA (например, 12.5): " CUDA_VERSION < /dev/tty; else read -r CUDA_VERSION; fi
+      fi
+    fi
+  else
+    DO_NVIDIA_TOOLKIT=false
+  fi
+
+  # Fish
+  if command -v fish >/dev/null 2>&1; then
+    echo -e "\033[0;32m✓ Fish shell (уже установлен)\033[0m"
+  else
+    select_option "Настроить Fish Shell (Fisher, Starship, плагины)" DO_FISH false
+  fi
+
+  # Автообновления
+  if grep -qs 'APT::Periodic::Unattended-Upgrade\s*"1"' /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null; then
+    echo -e "\033[0;32m✓ Автообновления безопасности (уже включены)\033[0m"
+  else
+    select_option "Включить автообновления безопасности (unattended-upgrades)" DO_UNATTENDED_UPDATES false
+  fi
+
   # GPU check
-  if prompt_yn "Выполнить проверку GPU (nvidia-smi и контейнер)" true; then CHECK_GPU=true; fi
+  select_option "Выполнить проверку GPU (nvidia-smi и контейнер)" CHECK_GPU false
+
+  echo
+  echo -e "\033[0;33m═════════════════════════════════════════\033[0m"
+  echo -e "\033[0;33m  Начинаем установку выбранных компонентов\033[0m"
+  echo -e "\033[0;33m═════════════════════════════════════════\033[0m"
+  echo
 }
 
 # -------- env detection --------
@@ -267,10 +353,7 @@ else
   info "Пропускаем автоконфигурацию /etc/wsl.conf (не запрошено)."
 fi
 
-if $interactive_default; then
-  section "0. Меню выбора"
-  show_menu_and_set_flags
-fi
+
 
 section "2. Подготовка системы"
 info "Обновляем индекс пакетов и устанавливаем базовые утилиты..."
