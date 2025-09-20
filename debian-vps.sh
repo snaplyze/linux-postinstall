@@ -1,5 +1,5 @@
 #!/bin/bash
-# Скрипт настройки VPS на Debian 12/13
+# Скрипт настройки Debian 12/13
 # Автоматическая настройка системы, оптимизация производительности и безопасности
 
 # Проверка прав root
@@ -20,7 +20,7 @@ export DEBIAN_FRONTEND=${DEBIAN_FRONTEND:-noninteractive}
 
 # Определение версии Debian
 if [ -r /etc/os-release ]; then
-    . /etc/os-release
+    . /etc/os-releaseьшс
 else
     echo "Не удалось определить версию операционной системы"
     exit 1
@@ -198,7 +198,7 @@ select_components() {
     clear
     echo ""
     print_color "blue" "╔═════════════════════════════════════════╗"
-    print_color "blue" "$(printf '║ %-37s ║' "НАСТРОЙКА VPS: ${DEBIAN_VERSION_HUMAN}")"
+    print_color "blue" "$(printf '║ %-37s ║' "НАСТРОЙКА: ${DEBIAN_VERSION_HUMAN}")"
     print_color "blue" "╚═════════════════════════════════════════╝"
     echo ""
     
@@ -425,7 +425,7 @@ select_components() {
 select_components_noninteractive() {
     echo ""
     print_color "blue" "╔═════════════════════════════════════════╗"
-    print_color "blue" "$(printf '║ %-37s ║' "НАСТРОЙКА VPS: ${DEBIAN_VERSION_HUMAN}")"
+    print_color "blue" "$(printf '║ %-37s ║' "НАСТРОЙКА: ${DEBIAN_VERSION_HUMAN}")"
     print_color "blue" "$(printf '║ %-37s ║' "НЕИНТЕРАКТИВНЫЙ РЕЖИМ")"
     print_color "blue" "╚═════════════════════════════════════════╝"
     echo ""
