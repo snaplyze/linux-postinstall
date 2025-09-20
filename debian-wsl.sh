@@ -473,10 +473,29 @@ install_nvidia() {
     print_color "yellow" "Устанавливаем NVIDIA Container Toolkit..."
     apt-get install -y nvidia-container-toolkit
 
-    print_color "yellow" "Устанавливаем NVIDIA CUDA Toolkit (библиотеки и утилиты)..."
-    apt-get install -y nvidia-cuda-toolkit
-    print_color "green" "Компоненты NVIDIA успешно установлены."
-    print_color "yellow" "Проверьте работу командой 'nvidia-smi' после перезапуска WSL."
+    # Опционально: установить CUDA Toolkit, если доступен в текущем дистрибутиве
+    if apt-cache policy nvidia-cuda-toolkit 2>/dev/null | awk '/Candidate:/ {print $2}' | grep -vq "(none)"; then
+        print_color "yellow" "Устанавливаем NVIDIA CUDA Toolkit (библиотеки и утилиты)..."
+        if apt-get install -y nvidia-cuda-toolkit; then
+            print_color "green" "CUDA Toolkit установлен."
+        else
+            print_color "yellow" "Не удалось установить nvidia-cuda-toolkit. Продолжаем с Container Toolkit."
+        fi
+    else
+        print_color "yellow" "Пакет nvidia-cuda-toolkit недоступен для ${DEBIAN_CODENAME}. Пропускаем установку CUDA."
+    fi
+
+    # Если Docker уже установлен, настроим рантайм NVIDIA сразу
+    if command -v nvidia-ctk >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
+        print_color "yellow" "Конфигурируем Docker для использования NVIDIA runtime..."
+        nvidia-ctk runtime configure --runtime=docker || true
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl restart docker || true
+        fi
+    fi
+
+    print_color "green" "NVIDIA Container Toolkit установлен."
+    print_color "yellow" "Для проверки GPU в контейнерах: docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi"
 }
 
 # 6. Установка базовых утилит
