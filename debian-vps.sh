@@ -1663,8 +1663,16 @@ fi
 if [ "$UPDATE_SYSTEM" = true ]; then
     step "Очистка временных файлов"
     apt clean
-    journalctl --vacuum-time=1d
+    journalctl --vacuum-time=1d || true
 fi
+
+# Финальная очистка системы и APT-кэша
+step "Финальная очистка системы"
+apt-get -y autoremove --purge || true
+apt-get -y autoclean || true
+apt-get -y clean || true
+# Очистка списков APT (при следующем использовании APT потребуется apt update)
+rm -rf /var/lib/apt/lists/* || true
 
 # Установки завершены
 step "Настройка завершена!"
