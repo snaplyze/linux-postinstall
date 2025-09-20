@@ -4,7 +4,7 @@ set -Eeuo pipefail
 # Debian 12/13 WSL bootstrap
 # - Избегает ошибок systemctl/dbus, когда systemd не запущен в WSL
 # - Устанавливает Docker CE и NVIDIA Container Toolkit с безопасными проверками
-# - Опционально настраивает rootless Docker и /etc/wsl.conf
+# - Опционально настраивает /etc/wsl.conf
 # - Опционально устанавливает CUDA Toolkit согласно рекомендациям NVIDIA для Debian
 
 LOG_FILE=${LOG_FILE:-"$PWD/wsl.log"}
@@ -34,12 +34,6 @@ has_user_systemd() {
   systemctl --user show-environment >/dev/null 2>&1
 }
 
-has_user_systemd_for() {
-  # Check user systemd manager for a specific user
-  local u="$1"
-  [ -n "$u" ] || return 1
-  sudo -u "$u" systemctl --user show-environment >/dev/null 2>&1
-}
 
 is_wsl() {
   grep -qi microsoft /proc/version 2>/dev/null || [ -n "${WSL_DISTRO_NAME:-}" ]
@@ -118,26 +112,19 @@ usage() {
 Использование: $0 [опции]
 Опции:
   --configure-wsl-conf     Автонастройка /etc/wsl.conf с systemd=true
-  --rootless-docker        Включить rootless Docker для текущего пользователя
-  --rootless-user NAME     Пользователь для rootless Docker (по умолчанию: NON-root $SUDO_USER)
   --install-cuda           Установить CUDA Toolkit из репозитория NVIDIA
   --cuda-version X.Y       Версия CUDA Toolkit (например, 12.5). По умолчанию авто.
   --cuda-auto-latest       Игнорировать --cuda-version и выбрать самую свежую cuda-toolkit-X-Y
-  --check-gpu              Проверить доступность GPU в WSL и через Docker
   --no-menu                Не показывать интерактивное меню (по умолчанию меню, если TTY)
   --help                   Показать эту справку
-
-Переменные окружения:
-  ROOTLESS_USER            Пользователь для rootless Docker (не root). Приоритетнее, чем авто-определение.
+ 
 EOF
 }
 
 # -------- args --------
 CONFIGURE_WSL_CONF=false
-ENABLE_ROOTLESS=false
 INSTALL_CUDA=false
 CUDA_VERSION=""
-CHECK_GPU=false
 CUDA_AUTO_LATEST=false
 NO_MENU=false
 DO_SSH_AGENT=true
@@ -154,12 +141,9 @@ DO_UNATTENDED_UPDATES=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --configure-wsl-conf) CONFIGURE_WSL_CONF=true ;;
-    --rootless-docker)    ENABLE_ROOTLESS=true ;;
-    --rootless-user)      ROOTLESS_USER=${2:-}; shift ;;
     --install-cuda)       INSTALL_CUDA=true ;;
     --cuda-version)       CUDA_VERSION=${2:-}; shift ;;
     --cuda-auto-latest)   CUDA_AUTO_LATEST=true ;;
-    --check-gpu)          CHECK_GPU=true ;;
     --no-menu)            NO_MENU=true ;;
     --help|-h)            usage; exit 0 ;;
     *) warn "Неизвестная опция: $1"; usage; exit 1 ;;
@@ -269,8 +253,7 @@ show_menu_and_set_flags() {
     select_option "Установить Docker CE" DO_INSTALL_DOCKER false
   fi
 
-  # Rootless Docker
-  select_option "Включить Rootless Docker" ENABLE_ROOTLESS false
+  #
 
   # NVIDIA + CUDA (единый пункт как в старом меню)
   if prompt_yn "Установить компоненты NVIDIA (Container Toolkit, CUDA)" false; then
@@ -301,8 +284,7 @@ show_menu_and_set_flags() {
     select_option "Включить автообновления безопасности (unattended-upgrades)" DO_UNATTENDED_UPDATES false
   fi
 
-  # GPU check
-  select_option "Выполнить проверку GPU (nvidia-smi и контейнер)" CHECK_GPU false
+  # GPU check (убрано)
 
   echo
   echo -e "\033[0;33m═════════════════════════════════════════\033[0m"
@@ -587,97 +569,7 @@ else
   info "Пропускаем установку Docker (не выбрано)."
 fi
 
-section "5. Rootless Docker (опция)"
-if $ENABLE_ROOTLESS; then
-  # Определяем целевого пользователя (не root)
-  TARGET_USER=${ROOTLESS_USER:-$DEFAULT_USER}
-  if [ -z "$TARGET_USER" ] || [ "$TARGET_USER" = "root" ]; then
-    if [ -r /dev/tty ]; then
-      read -r -p "Укажите пользователя для rootless Docker (не root): " TARGET_USER < /dev/tty
-    fi
-  fi
-  if [ -z "$TARGET_USER" ] || [ "$TARGET_USER" = "root" ]; then
-    warn "Отказываюсь настраивать rootless Docker для root. Пропуск."
-  else
-    # Проверим, существует ли пользователь; при интерактивном запуске предложим создать
-    if ! id "$TARGET_USER" >/dev/null 2>&1; then
-      if [ -r /dev/tty ]; then
-        read -r -p "Пользователь '$TARGET_USER' не существует. Создать? (y/N): " create_it < /dev/tty || create_it=""
-        if [[ "$create_it" =~ ^[yY]$ ]]; then
-          info "Создаём пользователя '$TARGET_USER' с правами sudo..."
-          ensure_pkg sudo
-          sudo_or_su useradd -m -G sudo -s /bin/bash "$TARGET_USER" || { warn "Не удалось создать пользователя '$TARGET_USER'"; return 0; }
-          sudo_or_su mkdir -p /etc/sudoers.d
-          echo "$TARGET_USER ALL=(ALL) NOPASSWD: ALL" | sudo_or_su tee "/etc/sudoers.d/$TARGET_USER" >/dev/null
-          sudo_or_su chmod 440 "/etc/sudoers.d/$TARGET_USER"
-          if [ -r /dev/tty ]; then
-            read -r -p "Задать пароль для '$TARGET_USER'? (y/N): " setpw < /dev/tty || setpw=""
-            if [[ "$setpw" =~ ^[yY]$ ]]; then
-              passwd "$TARGET_USER" < /dev/tty || true
-            fi
-          fi
-          ok "Пользователь '$TARGET_USER' создан."
-        else
-          warn "Пользователь не создан. Пропускаем настройку rootless Docker."
-          return 0
-        fi
-      else
-        warn "Пользователь '$TARGET_USER' не существует и нет TTY для подтверждения создания. Пропуск rootless."
-        return 0
-      fi
-    fi
-    info "Настраиваем rootless Docker для пользователя: $TARGET_USER"
-    ensure_pkg uidmap dbus-user-session slirp4netns fuse-overlayfs docker-ce-rootless-extras
-    if command -v dockerd-rootless-setuptool.sh >/dev/null 2>&1; then
-      # Обеспечим XDG_RUNTIME_DIR для пользователя без systemd
-      TARGET_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
-      TARGET_XDG="$TARGET_HOME/.local/run"
-      sudo_or_su mkdir -p "$TARGET_XDG" && sudo_or_su chown -R "$TARGET_USER":"$TARGET_USER" "$TARGET_XDG" && sudo_or_su chmod 700 "$TARGET_XDG"
-      # Установим rootless как пользователь
-      if sudo -u "$TARGET_USER" env XDG_RUNTIME_DIR="$TARGET_XDG" bash -lc 'dockerd-rootless-setuptool.sh install -f'; then
-        setup_ok=true
-      else
-        setup_ok=false
-        warn "Не удалось выполнить rootless setup для $TARGET_USER"
-      fi
-      # Переменные окружения в профиль пользователя
-      RL_SNIPPET="# WSL: rootless Docker\nexport XDG_RUNTIME_DIR=\"\${XDG_RUNTIME_DIR:-$TARGET_XDG}\"\nexport DOCKER_HOST=\"unix://$TARGET_XDG/docker.sock\"\n"
-      for f in "$TARGET_HOME/.bash_profile" "$TARGET_HOME/.profile"; do
-        sudo -u "$TARGET_USER" bash -lc "[ -f '$f' ] || :"
-        if ! grep -F "WSL: rootless Docker" "$f" >/dev/null 2>&1; then
-          printf "%b\n" "$RL_SNIPPET" | sudo_or_su tee -a "$f" >/dev/null
-          sudo_or_su chown "$TARGET_USER":"$TARGET_USER" "$f"
-          ok "Добавлены переменные окружения rootless Docker в ${f#${TARGET_HOME}/}."
-        fi
-      done
-      # Попытка запустить user unit, если доступен user systemd
-      if has_user_systemd_for "$TARGET_USER"; then
-        if sudo -u "$TARGET_USER" systemctl --user enable --now docker.service; then
-          ok "user docker.service запущен."
-        else
-          warn "Не удалось запустить user docker.service"
-        fi
-      else
-        warn "Пользовательский systemd недоступен. Добавляем автостарт dockerd-rootless.sh в профиль пользователя."
-        START_SNIPPET="# WSL: запуск dockerd-rootless.sh при входе\nif ! pgrep -u \"$TARGET_USER\" -f dockerd-rootless.sh >/dev/null 2>&1; then\n  nohup dockerd-rootless.sh >/dev/null 2>&1 &\nfi\n"
-        for f in "$TARGET_HOME/.bash_profile" "$TARGET_HOME/.profile"; do
-          if ! grep -F "WSL: запуск dockerd-rootless.sh" "$f" >/dev/null 2>&1; then
-            printf "%b\n" "$START_SNIPPET" | sudo_or_su tee -a "$f" >/dev/null
-            sudo_or_su chown "$TARGET_USER":"$TARGET_USER" "$f"
-            ok "Добавлен автостарт rootless демона в ${f#${TARGET_HOME}/}."
-          fi
-        done
-      fi
-      $setup_ok && ok "Rootless Docker настроен." || warn "Rootless Docker настроен частично."
-    else
-      warn "dockerd-rootless-setuptool.sh не найден — проверьте пакет docker-ce-rootless-extras."
-    fi
-  fi
-else
-  info "Пропускаем настройку rootless Docker (не запрошено)."
-fi
-
-section "6. NVIDIA Container Toolkit для WSL"
+section "5. NVIDIA Container Toolkit для WSL"
 if $DO_NVIDIA_TOOLKIT; then
   info "Подготавливаем ключ и репозиторий NVIDIA..."
   gpu_status_wsl || warn "GPU может быть недоступен в WSL сейчас; установка продолжится."
@@ -701,28 +593,11 @@ if $DO_NVIDIA_TOOLKIT; then
 
   if $DO_NVIDIA_TOOLKIT && command -v nvidia-ctk >/dev/null 2>&1; then
     info "Конфигурируем NVIDIA runtime для Docker..."
-    if $ENABLE_ROOTLESS; then
-      # Определяем пользователя rootless для настройки
-      RL_USER=${ROOTLESS_USER:-$DEFAULT_USER}
-      RL_HOME=$(getent passwd "$RL_USER" | cut -d: -f6)
-      RL_CFG="$RL_HOME/.config/docker"
-      sudo_or_su mkdir -p "$RL_CFG" && sudo_or_su chown -R "$RL_USER":"$RL_USER" "$RL_HOME/.config"
-      if sudo -u "$RL_USER" nvidia-ctk runtime configure --runtime=docker --config="$RL_CFG/daemon.json"; then
-        if has_user_systemd_for "$RL_USER"; then
-          sudo -u "$RL_USER" systemctl --user restart docker || warn "Не удалось перезапустить user docker"
-        else
-          warn "Перезапуск rootless docker пропущен (без user systemd). Перезапустите демона при необходимости."
-        fi
-      else
-        warn "Не удалось применить конфигурацию nvidia-ctk (user)"
-      fi
+    sudo_or_su nvidia-ctk runtime configure --runtime=docker || warn "Не удалось применить конфигурацию nvidia-ctk"
+    if has_systemd; then
+      sudo_or_su systemctl restart docker || warn "Не удалось перезапустить docker"
     else
-      sudo_or_su nvidia-ctk runtime configure --runtime=docker || warn "Не удалось применить конфигурацию nvidia-ctk"
-      if has_systemd; then
-        sudo_or_su systemctl restart docker || warn "Не удалось перезапустить docker"
-      else
-        warn "systemd неактивен — перезапуск docker пропущен. Перезапустите демон вручную при необходимости."
-      fi
+      warn "systemd неактивен — перезапуск docker пропущен. Перезапустите демон вручную при необходимости."
     fi
     ok "NVIDIA Container Toolkit установлен."
   else
@@ -732,7 +607,7 @@ else
   info "Пропускаем NVIDIA Container Toolkit (не выбрано)."
 fi
 
-section "7. (Опционально) CUDA Toolkit"
+section "6. (Опционально) CUDA Toolkit"
 if $INSTALL_CUDA; then
   info "Добавляем репозиторий CUDA от NVIDIA..."
   sudo_or_su install -m 0755 -d /usr/share/keyrings
@@ -797,26 +672,7 @@ else
   info "Пропускаем установку CUDA Toolkit (не запрошено)."
 fi
 
-section "8. Проверка GPU (опция)"
-if $CHECK_GPU; then
-  info "Локальная проверка nvidia-smi..."
-  if command -v nvidia-smi >/dev/null 2>&1; then
-    nvidia-smi || warn "nvidia-smi завершился с ошибкой"
-  else
-    warn "nvidia-smi не найден. Проверьте драйвер/пакеты в WSL."
-  fi
-  if command -v docker >/dev/null 2>&1; then
-    info "Проверка GPU в контейнере (может занять время)..."
-    docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi || \
-      warn "Контейнерная проверка не удалась. Проверьте конфигурацию Docker/NVIDIA."
-  else
-    warn "Docker недоступен — контейнерная проверка пропущена."
-  fi
-else
-  info "Пропускаем проверку GPU (не запрошено)."
-fi
-
-section "8a. Fish Shell (опция)"
+section "7. Fish Shell (опция)"
 if $DO_FISH; then
   info "Устанавливаем и настраиваем Fish + Starship для пользователя $DEFAULT_USER и root"
   ensure_pkg fish git curl
@@ -837,7 +693,7 @@ else
   info "Пропускаем настройку Fish (не выбрано)."
 fi
 
-section "8b. Автообновления безопасности (опция)"
+section "8. Автообновления безопасности (опция)"
 if $DO_UNATTENDED_UPDATES; then
   info "Устанавливаем unattended-upgrades и включаем автообновления безопасности..."
   ensure_pkg unattended-upgrades apt-listchanges
@@ -849,10 +705,17 @@ else
   info "Пропускаем автообновления (не выбрано)."
 fi
 
-section "9. Завершение"
+section "9. Очистка"
+info "Очищаем неиспользуемые пакеты и кэш APT..."
+DEBIAN_FRONTEND=noninteractive sudo_or_su apt-get -y autoremove --purge || true
+DEBIAN_FRONTEND=noninteractive sudo_or_su apt-get -y autoclean || true
+DEBIAN_FRONTEND=noninteractive sudo_or_su apt-get -y clean || true
+# Очистка списков APT (вернёт место; при следующем apt потребуется update)
+sudo_or_su rm -rf /var/lib/apt/lists/* || true
+ok "Очистка завершена."
+
+section "10. Завершение"
 ok "Готово. Лог: $LOG_FILE"
-info "Для проверки GPU в контейнерах:"
-echo "  docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi"
 if $INSTALL_CUDA; then
   echo
   echo "Итог по CUDA:"
