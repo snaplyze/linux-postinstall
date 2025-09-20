@@ -223,30 +223,82 @@ create_user() {
         fi
     fi
 
+    # Установка sudo при необходимости
+    if ! is_installed sudo; then
+        apt-get install -y sudo
+    fi
+
     if id "$new_user" &>/dev/null; then
-        print_color "yellow" "Пользователь '$new_user' уже существует. Пропуск."
-        return 0
-    fi
+        print_color "yellow" "Пользователь '$new_user' уже существует. Применяем параметры..."
 
-    print_color "yellow" "Создаем пользователя '$new_user' с оболочкой /bin/bash..."
-    useradd -m -G sudo -s /bin/bash "$new_user"
-
-    if [ "$NONINTERACTIVE" = true ]; then
-        if [ -n "$NEW_PASSWORD" ]; then
-            echo "$new_user:$NEW_PASSWORD" | chpasswd || true
+        # Смена пароля
+        if [ "$NONINTERACTIVE" = true ]; then
+            if [ -n "$NEW_PASSWORD" ]; then
+                echo "$new_user:$NEW_PASSWORD" | chpasswd || true
+                print_color "green" "Пароль пользователя '$new_user' обновлен."
+            else
+                print_color "yellow" "NONINTERACTIVE: пароль не изменен (NEW_PASSWORD пуст)."
+            fi
         else
-            print_color "yellow" "Пароль не задан (NEW_PASSWORD пуст). Пользователь создан без изменения пароля."
+            read -r -p "Сменить пароль для '$new_user'? (y/N): " chpass < /dev/tty
+            if [[ "$chpass" == "y" || "$chpass" == "Y" ]]; then
+                passwd "$new_user" < /dev/tty || true
+            fi
         fi
+
+        # Добавление в группу sudo
+        if ! id -nG "$new_user" | grep -qw sudo; then
+            usermod -aG sudo "$new_user"
+            print_color "green" "Пользователь '$new_user' добавлен в группу sudo."
+        else
+            print_color "green" "Пользователь '$new_user' уже в группе sudo."
+        fi
+
+        # Настройка sudo без пароля
+        mkdir -p /etc/sudoers.d
+        echo "$new_user ALL=(ALL) NOPASSWD: ALL" > "/etc/sudoers.d/$new_user"
+        chmod 440 "/etc/sudoers.d/$new_user"
+        print_color "green" "Sudo без пароля настроен для '$new_user'."
+
+        # Приведение оболочки входа к /bin/bash, как при создании нового пользователя
+        current_shell="$(getent passwd "$new_user" | awk -F: '{print $7}')"
+        if [ "$current_shell" != "/bin/bash" ]; then
+            usermod -s /bin/bash "$new_user" && \
+                print_color "green" "Оболочка входа изменена на /bin/bash для '$new_user'" || \
+                print_color "yellow" "Не удалось изменить оболочку входа для '$new_user'"
+        fi
+
+        # Гарантируем наличие домашней директории
+        home_dir="$(getent passwd "$new_user" | cut -d: -f6)"
+        if [ -n "$home_dir" ] && [ ! -d "$home_dir" ]; then
+            mkdir -p "$home_dir"
+            chown -R "$new_user":"$new_user" "$home_dir"
+            print_color "yellow" "Создана домашняя директория: $home_dir"
+        fi
+    
     else
-        print_color "yellow" "Установите пароль для пользователя '$new_user':"
-        passwd "$new_user" < /dev/tty
+        print_color "yellow" "Создаем пользователя '$new_user' с оболочкой /bin/bash..."
+        useradd -m -G sudo -s /bin/bash "$new_user"
+
+        if [ "$NONINTERACTIVE" = true ]; then
+            if [ -n "$NEW_PASSWORD" ]; then
+                echo "$new_user:$NEW_PASSWORD" | chpasswd || true
+            else
+                print_color "yellow" "Пароль не задан (NEW_PASSWORD пуст). Пользователь создан без изменения пароля."
+            fi
+        else
+            print_color "yellow" "Установите пароль для пользователя '$new_user':"
+            passwd "$new_user" < /dev/tty
+        fi
+
+        print_color "yellow" "Настраиваем sudo без пароля для '$new_user'..."
+        mkdir -p /etc/sudoers.d
+        echo "$new_user ALL=(ALL) NOPASSWD: ALL" > "/etc/sudoers.d/$new_user"
+        chmod 440 "/etc/sudoers.d/$new_user"
+
+        print_color "green" "Пользователь '$new_user' успешно создан."
     fi
 
-    print_color "yellow" "Настраиваем sudo без пароля для '$new_user'..."
-    echo "$new_user ALL=(ALL) NOPASSWD: ALL" | tee "/etc/sudoers.d/$new_user" > /dev/null
-    chmod 440 "/etc/sudoers.d/$new_user"
-
-    print_color "green" "Пользователь '$new_user' успешно создан."
     print_color "yellow" "Теперь вы можете запустить для него настройку Fish Shell."
 }
 
