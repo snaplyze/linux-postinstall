@@ -46,6 +46,28 @@ ensure_pkg() {
   sudo_or_su apt-get install -y --no-install-recommends "${pkgs[@]}"
 }
 
+run_as_user() {
+  # Run command as the primary, non-root user when available
+  local target_user
+  if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    target_user="$SUDO_USER"
+  else
+    target_user="$(logname 2>/dev/null || whoami)"
+  fi
+  if [ "$target_user" = "root" ] || ! command -v sudo >/dev/null 2>&1; then
+    "$@"
+  else
+    sudo -u "$target_user" "$@"
+  fi
+}
+
+DEFAULT_USER=""
+if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+  DEFAULT_USER="$SUDO_USER"
+else
+  DEFAULT_USER="$(logname 2>/dev/null || whoami)"
+fi
+
 apt_has_pkg() {
   local pkg="$1"
   apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/ {print $2}' | grep -vq "(none)"
@@ -94,6 +116,7 @@ usage() {
   --cuda-version X.Y       Версия CUDA Toolkit (например, 12.5). По умолчанию авто.
   --cuda-auto-latest       Игнорировать --cuda-version и выбрать самую свежую cuda-toolkit-X-Y
   --check-gpu              Проверить доступность GPU в WSL и через Docker
+  --no-menu                Не показывать интерактивное меню (по умолчанию меню, если TTY)
   --help                   Показать эту справку
 EOF
 }
@@ -105,6 +128,17 @@ INSTALL_CUDA=false
 CUDA_VERSION=""
 CHECK_GPU=false
 CUDA_AUTO_LATEST=false
+NO_MENU=false
+DO_SSH_AGENT=true
+DO_INSTALL_DOCKER=true
+DO_NVIDIA_TOOLKIT=true
+DO_UPDATE_SYSTEM=false
+DO_BASE_UTILS=false
+DO_CREATE_USER=false
+DO_LOCALES=false
+DO_TIMEZONE=false
+DO_FISH=false
+DO_UNATTENDED_UPDATES=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -114,11 +148,70 @@ while [ $# -gt 0 ]; do
     --cuda-version)       CUDA_VERSION=${2:-}; shift ;;
     --cuda-auto-latest)   CUDA_AUTO_LATEST=true ;;
     --check-gpu)          CHECK_GPU=true ;;
+    --no-menu)            NO_MENU=true ;;
     --help|-h)            usage; exit 0 ;;
     *) warn "Неизвестная опция: $1"; usage; exit 1 ;;
   esac
   shift
 done
+
+# If stdin is a TTY and no explicit no-menu, allow interactive menu by default
+interactive_default=false
+if ! $NO_MENU; then
+  if [ -t 0 ] || [ -r /dev/tty ]; then
+    interactive_default=true
+  fi
+fi
+
+show_menu_and_set_flags() {
+  echo
+  echo "Интерактивное меню настройки (Y/n):"
+  prompt_yn() {
+    local prompt="$1" default_yes="$2"; local ans
+    if $default_yes; then
+      if [ -r /dev/tty ]; then read -r -p " - $prompt [Y/n]: " ans < /dev/tty || ans=""; else read -r ans || ans=""; fi
+      case "$ans" in n|N) return 1;; *) return 0;; esac
+    else
+      if [ -r /dev/tty ]; then read -r -p " - $prompt [y/N]: " ans < /dev/tty || ans=""; else read -r ans || ans=""; fi
+      case "$ans" in y|Y) return 0;; *) return 1;; esac
+    fi
+  }
+  # WSL conf
+  if prompt_yn "Включить systemd в /etc/wsl.conf" false; then CONFIGURE_WSL_CONF=true; fi
+  # Обновление системы
+  if prompt_yn "Обновить систему и репозитории (apt update/upgrade)" true; then DO_UPDATE_SYSTEM=true; fi
+  # Базовые утилиты
+  if prompt_yn "Установить базовые утилиты (git, build-essential, fzf, bat, ripgrep и др.)" true; then DO_BASE_UTILS=true; fi
+  # Создание пользователя
+  if prompt_yn "Создать нового пользователя с sudo" false; then DO_CREATE_USER=true; fi
+  # Локали
+  if prompt_yn "Настроить локали (ru_RU, en_US)" false; then DO_LOCALES=true; fi
+  # Часовой пояс
+  if prompt_yn "Настроить часовой пояс" false; then DO_TIMEZONE=true; fi
+  # ssh-agent
+  if prompt_yn "Настроить ssh-agent" true; then DO_SSH_AGENT=true; else DO_SSH_AGENT=false; fi
+  # Docker
+  if prompt_yn "Установить Docker CE" true; then DO_INSTALL_DOCKER=true; else DO_INSTALL_DOCKER=false; fi
+  # Rootless
+  if prompt_yn "Включить rootless Docker" false; then ENABLE_ROOTLESS=true; fi
+  # NVIDIA toolkit
+  if prompt_yn "Установить NVIDIA Container Toolkit" true; then DO_NVIDIA_TOOLKIT=true; else DO_NVIDIA_TOOLKIT=false; fi
+  # CUDA
+  if prompt_yn "Установить CUDA Toolkit" false; then
+    INSTALL_CUDA=true
+    if prompt_yn "Выбрать самую свежую версию CUDA (auto-latest)" true; then
+      CUDA_AUTO_LATEST=true
+    else
+      if [ -r /dev/tty ]; then read -r -p "   Укажите версию CUDA (например, 12.5): " CUDA_VERSION < /dev/tty; else read -r CUDA_VERSION; fi
+    fi
+  fi
+  # Fish shell
+  if prompt_yn "Настроить Fish Shell (Fisher, Starship, плагины)" false; then DO_FISH=true; fi
+  # Автообновления безопасности
+  if prompt_yn "Включить автообновления безопасности (unattended-upgrades)" false; then DO_UNATTENDED_UPDATES=true; fi
+  # GPU check
+  if prompt_yn "Выполнить проверку GPU (nvidia-smi и контейнер)" true; then CHECK_GPU=true; fi
+}
 
 # -------- env detection --------
 if [ -r /etc/os-release ]; then
@@ -133,9 +226,14 @@ if ! is_wsl; then
   warn "Похоже, это не среда WSL. Скрипт рассчитан на WSL." 
 fi
 
+if $interactive_default; then
+  section "0. Меню выбора"
+  show_menu_and_set_flags
+fi
+
 section "1. Настройка WSL (опция)"
 if $CONFIGURE_WSL_CONF; then
-  info "Обновляем /etc/wsl.conf: включаем systemd=true..."
+  info "Обновляем /etc/wsl.conf: включаем systemd=true и пользователя по умолчанию..."
   TMP_WSL=$(mktemp)
   if [ -f /etc/wsl.conf ]; then
     sudo_or_su cp /etc/wsl.conf "/etc/wsl.conf.bak.$(date +%s)" || true
@@ -149,6 +247,19 @@ if $CONFIGURE_WSL_CONF; then
   else
     awk '1; /^\[boot\]$/ { print "systemd=true" }' "$TMP_WSL" >"${TMP_WSL}.new" && mv "${TMP_WSL}.new" "$TMP_WSL"
   fi
+  # Устанавливаем пользователя по умолчанию, если известен
+  WSL_DEFAULT_USER=${WSL_DEFAULT_USER:-$DEFAULT_USER}
+  if [ -n "$WSL_DEFAULT_USER" ] && [ "$WSL_DEFAULT_USER" != "root" ]; then
+    if ! grep -q '^\[user\]' "$TMP_WSL" 2>/dev/null; then
+      printf "\n[user]\ndefault=%s\n" "$WSL_DEFAULT_USER" >>"$TMP_WSL"
+    else
+      if grep -q '^default=' "$TMP_WSL"; then
+        sed -ri "s#^default=.*#default=${WSL_DEFAULT_USER}#" "$TMP_WSL"
+      else
+        awk -v u="$WSL_DEFAULT_USER" '1; /^\[user\]$/ { print "default=" u }' "$TMP_WSL" >"${TMP_WSL}.new" && mv "${TMP_WSL}.new" "$TMP_WSL"
+      fi
+    fi
+  fi
   sudo_or_su install -m 0644 "$TMP_WSL" /etc/wsl.conf
   rm -f "$TMP_WSL"
   ok "/etc/wsl.conf обновлён. Выполните в Windows: wsl --shutdown"
@@ -156,29 +267,157 @@ else
   info "Пропускаем автоконфигурацию /etc/wsl.conf (не запрошено)."
 fi
 
+if $interactive_default; then
+  section "0. Меню выбора"
+  show_menu_and_set_flags
+fi
+
 section "2. Подготовка системы"
 info "Обновляем индекс пакетов и устанавливаем базовые утилиты..."
 ensure_pkg ca-certificates curl gnupg lsb-release apt-transport-https xdg-user-dirs
 ok "Базовые пакеты готовы."
 
-section "3. Настройка ssh-agent в WSL"
-ensure_pkg openssh-client
-
-if has_user_systemd; then
-  info "Обнаружен пользовательский systemd. Включаем ssh-agent.socket..."
-  systemctl --user enable --now ssh-agent.socket || warn "Не удалось включить ssh-agent.socket"
-  ok "ssh-agent (user) активирован через systemd."
+section "2a. Обновление системы (опция)"
+if $DO_UPDATE_SYSTEM; then
+  info "Обогащаем APT компонентами contrib non-free non-free-firmware..."
+  enrich_apt_components_in_file() {
+    local f="$1"; [ -f "$f" ] || return 0
+    sed -i -E '/^\s*deb\s/ { /non-free-firmware/! s/(^deb\s+[^#]*\bmain)(\s|$)/\1 contrib non-free non-free-firmware\2/ }' "$f"
+  }
+  enrich_all_apt_components() {
+    enrich_apt_components_in_file "/etc/apt/sources.list"
+    for f in /etc/apt/sources.list.d/*.list; do [ -e "$f" ] && enrich_apt_components_in_file "$f"; done
+  }
+  ensure_debian_base_repos() {
+    local codename="${VERSION_CODENAME:-$(. /etc/os-release; echo $VERSION_CODENAME)}"; local f="/etc/apt/sources.list"
+    touch "$f"
+    ensure_line() { local file="$1"; shift; local line="$*"; local pattern="^$(printf '%s' "$line" | sed -E 's/[[:space:]]+/\\s+/g')$"; grep -Eq "$pattern" "$file" 2>/dev/null || echo "$line" >> "$file"; }
+    ensure_line "$f" "deb http://deb.debian.org/debian ${codename} main contrib non-free non-free-firmware"
+    ensure_line "$f" "deb http://deb.debian.org/debian ${codename}-updates main contrib non-free non-free-firmware"
+    ensure_line "$f" "deb http://security.debian.org/debian-security ${codename}-security main contrib non-free non-free-firmware"
+  }
+  enrich_all_apt_components
+  ensure_debian_base_repos
+  info "Выполняем apt update && apt upgrade -y"
+  sudo_or_su apt-get update -y
+  DEBIAN_FRONTEND=noninteractive sudo_or_su apt-get upgrade -y
+  ok "Система обновлена."
 else
-  warn "Пользовательский systemd недоступен. Настраиваем ssh-agent через профиль."
-  PROFILE_SNIPPET='# WSL: автозапуск ssh-agent (без systemd)\nif ! pgrep -u "$USER" ssh-agent >/dev/null 2>&1; then\n  eval "$(ssh-agent -s)" >/dev/null\nfi\n'
-  for f in "$HOME/.bash_profile" "$HOME/.profile"; do
-    [ -f "$f" ] || touch "$f"
-    if ! grep -F "WSL: автозапуск ssh-agent" "$f" >/dev/null 2>&1; then
-      printf "%b\n" "$PROFILE_SNIPPET" >>"$f"
-      ok "Добавлен автозапуск ssh-agent в ${f#${HOME}/}."
+  info "Пропускаем обновление системы (не выбрано)."
+fi
+
+section "3. Настройка ssh-agent в WSL"
+if $DO_SSH_AGENT; then
+  ensure_pkg openssh-client
+  if has_user_systemd; then
+    info "Обнаружен пользовательский systemd. Включаем ssh-agent.socket..."
+    systemctl --user enable --now ssh-agent.socket || warn "Не удалось включить ssh-agent.socket"
+    ok "ssh-agent (user) активирован через systemd."
+  else
+    warn "Пользовательский systemd недоступен. Настраиваем ssh-agent через профиль."
+    PROFILE_SNIPPET='# WSL: автозапуск ssh-agent (без systemd)\nif ! pgrep -u "$USER" ssh-agent >/dev/null 2>&1; then\n  eval "$(ssh-agent -s)" >/dev/null\nfi\n'
+    for f in "$HOME/.bash_profile" "$HOME/.profile"; do
+      [ -f "$f" ] || touch "$f"
+      if ! grep -F "WSL: автозапуск ssh-agent" "$f" >/dev/null 2>&1; then
+        printf "%b\n" "$PROFILE_SNIPPET" >>"$f"
+        ok "Добавлен автозапуск ssh-agent в ${f#${HOME}/}."
+      fi
+    done
+    ok "ssh-agent будет подниматься при входе в оболочку."
+  fi
+else
+  info "Пропускаем настройку ssh-agent (не выбрано)."
+fi
+
+section "3a. Базовые утилиты (опция)"
+if $DO_BASE_UTILS; then
+  info "Устанавливаем набор утилит: build-essential git wget curl htop nano vim unzip zip tar xz-utils fzf ripgrep fd-find tree jq bat"
+  ensure_pkg build-essential git wget curl htop nano vim unzip zip tar xz-utils fzf ripgrep fd-find tree jq bat
+  # Создаём alias bat -> batcat, если нужно (Debian называет bat как batcat)
+  if command -v batcat >/dev/null 2>&1 && ! command -v bat >/dev/null 2>&1; then
+    sudo_or_su ln -sf "$(command -v batcat)" /usr/local/bin/bat || true
+  fi
+  # Создаём alias fd -> fdfind, если нужно
+  if command -v fdfind >/dev/null 2>&1 && ! command -v fd >/dev/null 2>&1; then
+    sudo_or_su ln -sf "$(command -v fdfind)" /usr/local/bin/fd || true
+  fi
+  ok "Базовые утилиты установлены."
+else
+  info "Пропускаем установку базовых утилит (не выбрано)."
+fi
+
+section "3b. Создание пользователя (опция)"
+if $DO_CREATE_USER; then
+  info "Создание нового пользователя с sudo..."
+  NEW_USERNAME=${NEW_USERNAME:-}
+  if [ -z "$NEW_USERNAME" ] && [ -r /dev/tty ]; then
+    read -r -p "Введите имя нового пользователя: " NEW_USERNAME < /dev/tty
+  fi
+  if [ -z "$NEW_USERNAME" ]; then
+    warn "Имя пользователя не задано. Пропускаем создание."
+  else
+    ensure_pkg sudo
+    if id "$NEW_USERNAME" >/dev/null 2>&1; then
+      warn "Пользователь '$NEW_USERNAME' уже существует. Пропускаем создание."
+    else
+      sudo_or_su useradd -m -G sudo -s /bin/bash "$NEW_USERNAME" || warn "Не удалось создать пользователя"
+      if [ -r /dev/tty ]; then
+        info "Установите пароль для '$NEW_USERNAME' (опционально). Нажмите Enter, чтобы пропустить."
+        passwd "$NEW_USERNAME" < /dev/tty || true
+      fi
+      sudo_or_su mkdir -p /etc/sudoers.d
+      echo "$NEW_USERNAME ALL=(ALL) NOPASSWD: ALL" | sudo_or_su tee "/etc/sudoers.d/$NEW_USERNAME" >/dev/null
+      sudo_or_su chmod 440 "/etc/sudoers.d/$NEW_USERNAME"
+      ok "Пользователь '$NEW_USERNAME' создан и добавлен в sudo (NOPASSWD)."
     fi
-  done
-  ok "ssh-agent будет подниматься при входе в оболочку."
+  fi
+else
+  info "Пропускаем создание пользователя (не выбрано)."
+fi
+
+section "3c. Локали (опция)"
+if $DO_LOCALES; then
+  info "Добавляем локали ru_RU.UTF-8 и en_US.UTF-8, устанавливаем системную локаль..."
+  ensure_pkg locales
+  ensure_locale() {
+    local name="$1"; [ -n "$name" ] || return 1
+    if ! grep -qi "^#*\s*${name}\s\+UTF-8" /etc/locale.gen 2>/dev/null; then
+      echo "${name} UTF-8" | sudo_or_su tee -a /etc/locale.gen >/dev/null
+    else
+      sudo_or_su sed -i -E "s/^#\s*(${name})\s+UTF-8/\1 UTF-8/I" /etc/locale.gen
+    fi
+  }
+  ensure_locale "ru_RU"
+  ensure_locale "en_US"
+  sudo_or_su locale-gen
+  LOCALE_DEFAULT=${LOCALE_DEFAULT:-ru_RU.UTF-8}
+  echo "LANG=$LOCALE_DEFAULT" | sudo_or_su tee /etc/default/locale >/dev/null
+  ok "Локали настроены (LANG=$LOCALE_DEFAULT)."
+else
+  info "Пропускаем настройку локалей (не выбрано)."
+fi
+
+section "3d. Часовой пояс (опция)"
+if $DO_TIMEZONE; then
+  TZ_INPUT=${TIMEZONE:-}
+  if [ -z "$TZ_INPUT" ] && [ -r /dev/tty ]; then
+    read -r -p "Укажите часовой пояс (например, Europe/Moscow): " TZ_INPUT < /dev/tty
+  fi
+  if [ -z "$TZ_INPUT" ]; then
+    warn "Часовой пояс не задан. Пропускаем."
+  else
+    if has_systemd; then
+      sudo_or_su timedatectl set-timezone "$TZ_INPUT" || warn "Не удалось установить таймзону"
+    else
+      [ -e "/usr/share/zoneinfo/$TZ_INPUT" ] && {
+        sudo_or_su ln -sf "/usr/share/zoneinfo/$TZ_INPUT" /etc/localtime
+        echo "$TZ_INPUT" | sudo_or_su tee /etc/timezone >/dev/null
+      }
+    fi
+    ok "Часовой пояс настроен: $TZ_INPUT"
+  fi
+else
+  info "Пропускаем настройку часового пояса (не выбрано)."
 fi
 
 section "4. Установка Docker CE"
@@ -195,23 +434,27 @@ echo \
   sudo_or_su tee /etc/apt/sources.list.d/docker.list >/dev/null || true
 
 info "Устанавливаем docker-ce, containerd и плагины..."
-DEBIAN_FRONTEND=noninteractive \
-sudo_or_su apt-get update -y
-DEBIAN_FRONTEND=noninteractive \
-sudo_or_su apt-get install -y --no-install-recommends \
-  docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || {
-    warn "Не удалось установить docker из репозитория. Возможно, репозиторий ещё не выпустил пакеты для ${VERSION_CODENAME}."
-    warn "Вы можете повторить позже или использовать Docker Desktop для Windows с интеграцией WSL."
-  }
+if $DO_INSTALL_DOCKER; then
+  DEBIAN_FRONTEND=noninteractive \
+  sudo_or_su apt-get update -y
+  DEBIAN_FRONTEND=noninteractive \
+  sudo_or_su apt-get install -y --no-install-recommends \
+    docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || {
+      warn "Не удалось установить docker из репозитория. Возможно, репозиторий ещё не выпустил пакеты для ${VERSION_CODENAME}."
+      warn "Вы можете повторить позже или использовать Docker Desktop для Windows с интеграцией WSL."
+    }
 
-if has_systemd; then
-  info "Включаем сервисы Docker и containerd через systemd..."
-  sudo_or_su systemctl enable --now containerd || warn "containerd не запущен"
-  sudo_or_su systemctl enable --now docker || warn "docker не запущен"
-  ok "Docker сервисы активированы."
+  if has_systemd; then
+    info "Включаем сервисы Docker и containerd через systemd..."
+    sudo_or_su systemctl enable --now containerd || warn "containerd не запущен"
+    sudo_or_su systemctl enable --now docker || warn "docker не запущен"
+    ok "Docker сервисы активированы."
+  else
+    warn "systemd в этой сессии не активен. Пропускаем enable/start сервисов."
+    warn "Для WSL рекомендуется Docker Desktop (WSL integration)."
+  fi
 else
-  warn "systemd в этой сессии не активен. Пропускаем enable/start сервисов."
-  warn "Для WSL рекомендуется Docker Desktop (WSL integration)."
+  info "Пропускаем установку Docker (не выбрано)."
 fi
 
 section "5. Rootless Docker (опция)"
@@ -257,49 +500,48 @@ else
 fi
 
 section "6. NVIDIA Container Toolkit для WSL"
-info "Подготавливаем ключ и репозиторий NVIDIA..."
-gpu_status_wsl || warn "GPU может быть недоступен в WSL сейчас; установка продолжится."
-sudo_or_su install -m 0755 -d /usr/share/keyrings
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
-  sudo_or_su gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+if $DO_NVIDIA_TOOLKIT; then
+  info "Подготавливаем ключ и репозиторий NVIDIA..."
+  gpu_status_wsl || warn "GPU может быть недоступен в WSL сейчас; установка продолжится."
+  sudo_or_su install -m 0755 -d /usr/share/keyrings
+  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
+    sudo_or_su gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
 
-# Используем стабильный список, чтобы избежать несовместимости с codename
-curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/amd64/ | \
-  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-  sudo_or_su tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
+  # Официальный способ: использование distribution=IDVERSION_ID
+  distribution=$(. /etc/os-release; echo ${ID}${VERSION_ID})
+  curl -fsSL https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+    sed 's#deb [^ ]*#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg]#g' | \
+    sudo_or_su tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
 
-DEBIAN_FRONTEND=noninteractive \
-sudo_or_su apt-get update -y
-DEBIAN_FRONTEND=noninteractive \
-sudo_or_su apt-get install -y --no-install-recommends nvidia-container-toolkit || warn "Не удалось установить NVIDIA Container Toolkit"
+  DEBIAN_FRONTEND=noninteractive \
+  sudo_or_su apt-get update -y
+  DEBIAN_FRONTEND=noninteractive \
+  sudo_or_su apt-get install -y --no-install-recommends nvidia-container-toolkit || warn "Не удалось установить NVIDIA Container Toolkit"
 
-if command -v nvidia-ctk >/dev/null 2>&1; then
-  info "Конфигурируем NVIDIA runtime для Docker..."
-  if $ENABLE_ROOTLESS; then
-    # Конфигурация для rootless: пользовательский daemon.json
-    mkdir -p "$HOME/.config/docker"
-    nvidia-ctk runtime configure --runtime=docker --config="$HOME/.config/docker/daemon.json" || warn "Не удалось применить конфигурацию nvidia-ctk (user)"
-    if has_user_systemd; then
-      systemctl --user restart docker || warn "Не удалось перезапустить user docker"
+  if command -v nvidia-ctk >/dev/null 2>&1; then
+    info "Конфигурируем NVIDIA runtime для Docker..."
+    if $ENABLE_ROOTLESS; then
+      mkdir -p "$HOME/.config/docker"
+      nvidia-ctk runtime configure --runtime=docker --config="$HOME/.config/docker/daemon.json" || warn "Не удалось применить конфигурацию nvidia-ctk (user)"
+      if has_user_systemd; then
+        systemctl --user restart docker || warn "Не удалось перезапустить user docker"
+      else
+        warn "Перезапуск rootless docker пропущен (без systemd). Перезапустите демона при необходимости."
+      fi
     else
-      warn "Перезапуск rootless docker пропущен (без systemd). Перезапустите демона при необходимости."
+      sudo_or_su nvidia-ctk runtime configure --runtime=docker || warn "Не удалось применить конфигурацию nvidia-ctk"
+      if has_systemd; then
+        sudo_or_su systemctl restart docker || warn "Не удалось перезапустить docker"
+      else
+        warn "systemd неактивен — перезапуск docker пропущен. Перезапустите демон вручную при необходимости."
+      fi
     fi
+    ok "NVIDIA Container Toolkit установлен."
   else
-    sudo_or_su nvidia-ctk runtime configure --runtime=docker || warn "Не удалось применить конфигурацию nvidia-ctk"
-    if has_systemd; then
-      sudo_or_su systemctl restart docker || warn "Не удалось перезапустить docker"
-    else
-      warn "systemd неактивен — перезапуск docker пропущен. Перезапустите демон вручную при необходимости."
-    fi
+    warn "nvidia-ctk не найден — проверьте, установился ли пакет."
   fi
-  if has_systemd; then
-    :
-  else
-    :
-  fi
-  ok "NVIDIA Container Toolkit установлен."
 else
-  warn "nvidia-ctk не найден — проверьте, установился ли пакет."
+  info "Пропускаем NVIDIA Container Toolkit (не выбрано)."
 fi
 
 section "7. (Опционально) CUDA Toolkit"
@@ -384,6 +626,39 @@ if $CHECK_GPU; then
   fi
 else
   info "Пропускаем проверку GPU (не запрошено)."
+fi
+
+section "8a. Fish Shell (опция)"
+if $DO_FISH; then
+  info "Устанавливаем и настраиваем Fish + Starship для пользователя $DEFAULT_USER и root"
+  ensure_pkg fish git curl
+  # Установка Starship
+  if ! command -v starship >/dev/null 2>&1; then
+    sh -c "$(curl -fsSL https://starship.rs/install.sh)" -- -y || warn "Не удалось установить Starship через скрипт"
+  fi
+  # Настройка для пользователя
+  run_as_user bash -lc 'mkdir -p ~/.config && [ -f ~/.config/starship.toml ] || echo "add_newline = false" > ~/.config/starship.toml'
+  run_as_user bash -lc 'mkdir -p ~/.config/fish && grep -q starship ~/.config/fish/config.fish 2>/dev/null || echo "starship init fish | source" >> ~/.config/fish/config.fish'
+  # Сделать fish оболочкой по умолчанию (если можно)
+  if command -v chsh >/dev/null 2>&1; then
+    sudo_or_su chsh -s /usr/bin/fish "$DEFAULT_USER" || true
+    [ "$DEFAULT_USER" != "root" ] && sudo_or_su chsh -s /usr/bin/fish root || true
+  fi
+  ok "Fish + Starship настроены."
+else
+  info "Пропускаем настройку Fish (не выбрано)."
+fi
+
+section "8b. Автообновления безопасности (опция)"
+if $DO_UNATTENDED_UPDATES; then
+  info "Устанавливаем unattended-upgrades и включаем автообновления безопасности..."
+  ensure_pkg unattended-upgrades apt-listchanges
+  sudo_or_su dpkg-reconfigure -f noninteractive unattended-upgrades || true
+  # Минимальная гарантия включения через конфиг
+  echo 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";' | sudo_or_su tee /etc/apt/apt.conf.d/20auto-upgrades >/dev/null
+  ok "Автообновления включены."
+else
+  info "Пропускаем автообновления (не выбрано)."
 fi
 
 section "9. Завершение"
