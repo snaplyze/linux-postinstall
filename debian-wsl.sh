@@ -554,6 +554,7 @@ setup_fish() {
         curl -sS https://starship.rs/install.sh | sh -s -- -y; \
         fish -c 'curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher'; \
         fish -c 'fisher install jethrokuan/z PatrickF1/fzf.fish jorgebucaran/autopair.fish franciscolourenco/done edc/bass'; \
+        cat > ~/.config/fish/functions/fish_greeting.fish << 'EOF'\nfunction fish_greeting\n    echo \"🐧 Debian - \"(date '+%Y-%m-%d %H:%M')\nend\nEOF\n; \
     "
     chsh -s /usr/bin/fish $target_user
 
@@ -561,6 +562,12 @@ setup_fish() {
     print_color "yellow" "Настраиваем Fish для root..."
     mkdir -p /root/.config/fish/functions
     cp -r /home/$target_user/.config/fish/ /root/.config/
+    # Свой greeting для root
+    cat > /root/.config/fish/functions/fish_greeting.fish << 'EOF'
+function fish_greeting
+    echo "🐧 Debian [ROOT] - "(date '+%Y-%m-%d %H:%M')
+end
+EOF
     chsh -s /usr/bin/fish root
 
     print_color "green" "Fish Shell настроен для '$target_user' и root."
