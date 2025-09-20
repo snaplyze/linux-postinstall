@@ -674,21 +674,196 @@ fi
 
 section "7. Fish Shell (опция)"
 if $DO_FISH; then
-  info "Устанавливаем и настраиваем Fish + Starship для пользователя $DEFAULT_USER и root"
-  ensure_pkg fish git curl
-  # Установка Starship
+  info "Полная настройка fish shell (Fisher, плагины, fzf, fd, bat, Starship, автодополнения Docker)"
+
+  # Установим fish и сопутствующие утилиты
+  ensure_pkg fish fzf fd-find bat git curl
+
+  # Установка Starship глобально (если ещё не установлен)
   if ! command -v starship >/dev/null 2>&1; then
-    sh -c "$(curl -fsSL https://starship.rs/install.sh)" -- -y || warn "Не удалось установить Starship через скрипт"
+    info "Устанавливаем Starship prompt..."
+    curl -fsSL --connect-timeout 15 --retry 3 https://starship.rs/install.sh | sh -s -- -y || warn "Не удалось установить Starship"
   fi
-  # Настройка для пользователя
-  run_as_user bash -lc 'mkdir -p ~/.config && [ -f ~/.config/starship.toml ] || echo "add_newline = false" > ~/.config/starship.toml'
-  run_as_user bash -lc 'mkdir -p ~/.config/fish && grep -q starship ~/.config/fish/config.fish 2>/dev/null || echo "starship init fish | source" >> ~/.config/fish/config.fish'
-  # Сделать fish оболочкой по умолчанию (если можно)
+
+  # Определим локаль для fish-конфигов
+  fish_locale="${LOCALE_DEFAULT:-}"
+  if [ -z "$fish_locale" ]; then
+    fish_locale="$(locale 2>/dev/null | awk -F= '/^LANG=/{print $2}' | tail -n1)"
+  fi
+  if [ -z "$fish_locale" ] || [ "$fish_locale" = "C" ] || [ "$fish_locale" = "POSIX" ]; then
+    fish_locale="en_US.UTF-8"
+  fi
+
+  # ---------- Настройка для root ----------
+  sudo_or_su mkdir -p /root/.config/fish/functions /root/.config/fish/completions
+  cat > /root/.config/fish/config.fish << 'ROOT_CONFIG_EOF'
+# Настройки Debian (WSL)
+set -gx LANG __FISH_LOCALE__
+set -gx LC_ALL __FISH_LOCALE__
+
+# Алиасы
+alias ll='ls -la'
+alias la='ls -A'
+alias l='ls'
+alias cls='clear'
+alias ..='cd ..'
+alias ...='cd ../..'
+
+# Улучшенные утилиты
+if type -q batcat
+    alias cat='batcat --paging=never'
+end
+if type -q fdfind
+    alias fd='fdfind'
+end
+
+# Настройки fish
+set -U fish_greeting
+set fish_key_bindings fish_default_key_bindings
+set fish_autosuggestion_enabled 1
+
+# FZF интеграция
+set -gx FZF_DEFAULT_COMMAND 'fdfind --type f --strip-cwd-prefix 2>/dev/null || fd --type f --strip-cwd-prefix 2>/dev/null || find . -type f'
+set -gx FZF_CTRL_T_COMMAND $FZF_DEFAULT_COMMAND
+
+# Вспомогательные функции
+function b --description 'Run command in bash -lc'
+    set -l cmd (string join ' ' -- $argv)
+    bash -lc "$cmd"
+end
+
+function bcurl --description 'Download URL and run via bash'
+    if test (count $argv) -lt 1
+        echo 'Usage: bcurl <url>'
+        return 1
+    end
+    curl -fsSL $argv[1] | bash
+end
+
+# Starship prompt
+starship init fish | source
+ROOT_CONFIG_EOF
+  sed -i "s|__FISH_LOCALE__|$fish_locale|g" /root/.config/fish/config.fish
+
+  # Приветствие для root
+  cat > /root/.config/fish/functions/fish_greeting.fish << 'ROOT_GREETING_EOF'
+function fish_greeting
+    echo "🐧 Debian WSL [ROOT] - "(date '+%Y-%m-%d %H:%M')""
+end
+ROOT_GREETING_EOF
+
+  # Автодополнения Docker для root
+  curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/docker/cli/master/contrib/completion/fish/docker.fish -o /root/.config/fish/completions/docker.fish || true
+  curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/docker/compose/master/contrib/completion/fish/docker-compose.fish -o /root/.config/fish/completions/docker-compose.fish || true
+
+  # Установка Fisher и плагинов для root
+  cat > /tmp/install_fisher_root.fish << 'FISHER_ROOT_SCRIPT_EOF'
+#!/usr/bin/env fish
+curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
+fisher install jorgebucaran/fisher
+fisher install jethrokuan/z
+fisher install PatrickF1/fzf.fish
+fisher install jorgebucaran/autopair.fish
+fisher install franciscolourenco/done
+fisher install edc/bass
+FISHER_ROOT_SCRIPT_EOF
+  chmod +x /tmp/install_fisher_root.fish
+  fish /tmp/install_fisher_root.fish || true
+  rm -f /tmp/install_fisher_root.fish
+
+  # Сделать fish оболочкой по умолчанию для root
   if command -v chsh >/dev/null 2>&1; then
-    sudo_or_su chsh -s /usr/bin/fish "$DEFAULT_USER" || true
-    [ "$DEFAULT_USER" != "root" ] && sudo_or_su chsh -s /usr/bin/fish root || true
+    sudo_or_su chsh -s /usr/bin/fish root || true
   fi
-  ok "Fish + Starship настроены."
+
+  # ---------- Настройка для пользователя ----------
+  if getent passwd "$DEFAULT_USER" >/dev/null 2>&1; then
+    USER_HOME=$(getent passwd "$DEFAULT_USER" | cut -d: -f6)
+    sudo_or_su mkdir -p "$USER_HOME/.config/fish/functions" "$USER_HOME/.config/fish/completions"
+    cat > /tmp/user_config.fish << 'USER_CONFIG_EOF'
+# Настройки Debian (WSL)
+set -gx LANG __FISH_LOCALE__
+set -gx LC_ALL __FISH_LOCALE__
+
+# Алиасы
+alias ll='ls -la'
+alias la='ls -A'
+alias l='ls'
+alias cls='clear'
+alias ..='cd ..'
+alias ...='cd ../..'
+
+# Улучшенные утилиты
+if type -q batcat
+    alias cat='batcat --paging=never'
+end
+if type -q fdfind
+    alias fd='fdfind'
+end
+
+# Настройки fish
+set -U fish_greeting
+set fish_key_bindings fish_default_key_bindings
+set fish_autosuggestion_enabled 1
+
+# FZF интеграция
+set -gx FZF_DEFAULT_COMMAND 'fdfind --type f --strip-cwd-prefix 2>/dev/null || fd --type f --strip-cwd-prefix 2>/dev/null || find . -type f'
+set -gx FZF_CTRL_T_COMMAND $FZF_DEFAULT_COMMAND
+
+# Вспомогательные функции
+function b --description 'Run command in bash -lc'
+    set -l cmd (string join ' ' -- $argv)
+    bash -lc "$cmd"
+end
+
+function bcurl --description 'Download URL and run via bash'
+    if test (count $argv) -lt 1
+        echo 'Usage: bcurl <url>'
+        return 1
+    end
+    curl -fsSL $argv[1] | bash
+end
+
+# Starship prompt
+starship init fish | source
+USER_CONFIG_EOF
+    sed -i "s|__FISH_LOCALE__|$fish_locale|g" /tmp/user_config.fish
+    cat > /tmp/user_greeting.fish << 'USER_GREETING_EOF'
+function fish_greeting
+    echo "🐧 Debian WSL - "(date '+%Y-%m-%d %H:%M')""
+end
+USER_GREETING_EOF
+    sudo_or_su cp /tmp/user_config.fish "$USER_HOME/.config/fish/config.fish"
+    sudo_or_su cp /tmp/user_greeting.fish "$USER_HOME/.config/fish/functions/fish_greeting.fish"
+    sudo_or_su chown -R "$DEFAULT_USER":"$DEFAULT_USER" "$USER_HOME/.config/fish"
+    rm -f /tmp/user_config.fish /tmp/user_greeting.fish
+
+    # Автодополнения Docker для пользователя
+    sudo -u "$DEFAULT_USER" bash -lc "curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/docker/cli/master/contrib/completion/fish/docker.fish -o ~/.config/fish/completions/docker.fish || true"
+    sudo -u "$DEFAULT_USER" bash -lc "curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/docker/compose/master/contrib/completion/fish/docker-compose.fish -o ~/.config/fish/completions/docker-compose.fish || true"
+
+    # Установка Fisher и плагинов для пользователя
+    cat > /tmp/install_fisher_user.fish << 'FISHER_USER_SCRIPT_EOF'
+#!/usr/bin/env fish
+curl -fsSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source
+fisher install jorgebucaran/fisher
+fisher install jethrokuan/z
+fisher install PatrickF1/fzf.fish
+fisher install jorgebucaran/autopair.fish
+fisher install franciscolourenco/done
+fisher install edc/bass
+FISHER_USER_SCRIPT_EOF
+    chmod +x /tmp/install_fisher_user.fish
+    sudo -u "$DEFAULT_USER" fish /tmp/install_fisher_user.fish || true
+    rm -f /tmp/install_fisher_user.fish
+
+    # Сделать fish оболочкой по умолчанию для пользователя
+    if command -v chsh >/dev/null 2>&1; then
+      sudo_or_su chsh -s /usr/bin/fish "$DEFAULT_USER" || true
+    fi
+  fi
+
+  ok "Fish shell настроен для root и пользователя $DEFAULT_USER."
 else
   info "Пропускаем настройку Fish (не выбрано)."
 fi
