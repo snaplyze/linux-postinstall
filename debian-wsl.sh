@@ -34,6 +34,13 @@ has_user_systemd() {
   systemctl --user show-environment >/dev/null 2>&1
 }
 
+has_user_systemd_for() {
+  # Check user systemd manager for a specific user
+  local u="$1"
+  [ -n "$u" ] || return 1
+  sudo -u "$u" systemctl --user show-environment >/dev/null 2>&1
+}
+
 is_wsl() {
   grep -qi microsoft /proc/version 2>/dev/null || [ -n "${WSL_DISTRO_NAME:-}" ]
 }
@@ -644,7 +651,7 @@ if $ENABLE_ROOTLESS; then
         fi
       done
       # Попытка запустить user unit, если доступен user systemd
-      if has_user_systemd; then
+      if has_user_systemd_for "$TARGET_USER"; then
         if sudo -u "$TARGET_USER" systemctl --user enable --now docker.service; then
           ok "user docker.service запущен."
         else
@@ -675,13 +682,16 @@ if $DO_NVIDIA_TOOLKIT; then
   info "Подготавливаем ключ и репозиторий NVIDIA..."
   gpu_status_wsl || warn "GPU может быть недоступен в WSL сейчас; установка продолжится."
   sudo_or_su install -m 0755 -d /usr/share/keyrings
-  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
-    sudo_or_su gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+  if [ ! -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg ]; then
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
+      sudo_or_su gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+  else
+    info "Ключ NVIDIA уже установлен."
+  fi
 
-  # Официальный способ: использование distribution=IDVERSION_ID
-  distribution=$(. /etc/os-release; echo ${ID}${VERSION_ID})
-  curl -fsSL https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
-    sed 's#deb [^ ]*#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg]#g' | \
+  # Рекомендованный универсальный источник для Debian/Ubuntu: stable/deb/<arch>
+  ARCH="$(dpkg --print-architecture)"  # amd64 / arm64
+  echo "deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/${ARCH}/ /" | \
     sudo_or_su tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
 
   DEBIAN_FRONTEND=noninteractive \
@@ -689,15 +699,22 @@ if $DO_NVIDIA_TOOLKIT; then
   DEBIAN_FRONTEND=noninteractive \
   sudo_or_su apt-get install -y --no-install-recommends nvidia-container-toolkit || warn "Не удалось установить NVIDIA Container Toolkit"
 
-  if command -v nvidia-ctk >/dev/null 2>&1; then
+  if $DO_NVIDIA_TOOLKIT && command -v nvidia-ctk >/dev/null 2>&1; then
     info "Конфигурируем NVIDIA runtime для Docker..."
     if $ENABLE_ROOTLESS; then
-      mkdir -p "$HOME/.config/docker"
-      nvidia-ctk runtime configure --runtime=docker --config="$HOME/.config/docker/daemon.json" || warn "Не удалось применить конфигурацию nvidia-ctk (user)"
-      if has_user_systemd; then
-        systemctl --user restart docker || warn "Не удалось перезапустить user docker"
+      # Определяем пользователя rootless для настройки
+      RL_USER=${ROOTLESS_USER:-$DEFAULT_USER}
+      RL_HOME=$(getent passwd "$RL_USER" | cut -d: -f6)
+      RL_CFG="$RL_HOME/.config/docker"
+      sudo_or_su mkdir -p "$RL_CFG" && sudo_or_su chown -R "$RL_USER":"$RL_USER" "$RL_HOME/.config"
+      if sudo -u "$RL_USER" nvidia-ctk runtime configure --runtime=docker --config="$RL_CFG/daemon.json"; then
+        if has_user_systemd_for "$RL_USER"; then
+          sudo -u "$RL_USER" systemctl --user restart docker || warn "Не удалось перезапустить user docker"
+        else
+          warn "Перезапуск rootless docker пропущен (без user systemd). Перезапустите демона при необходимости."
+        fi
       else
-        warn "Перезапуск rootless docker пропущен (без systemd). Перезапустите демона при необходимости."
+        warn "Не удалось применить конфигурацию nvidia-ctk (user)"
       fi
     else
       sudo_or_su nvidia-ctk runtime configure --runtime=docker || warn "Не удалось применить конфигурацию nvidia-ctk"
