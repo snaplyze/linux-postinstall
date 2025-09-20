@@ -112,12 +112,16 @@ usage() {
 Опции:
   --configure-wsl-conf     Автонастройка /etc/wsl.conf с systemd=true
   --rootless-docker        Включить rootless Docker для текущего пользователя
+  --rootless-user NAME     Пользователь для rootless Docker (по умолчанию: NON-root $SUDO_USER)
   --install-cuda           Установить CUDA Toolkit из репозитория NVIDIA
   --cuda-version X.Y       Версия CUDA Toolkit (например, 12.5). По умолчанию авто.
   --cuda-auto-latest       Игнорировать --cuda-version и выбрать самую свежую cuda-toolkit-X-Y
   --check-gpu              Проверить доступность GPU в WSL и через Docker
   --no-menu                Не показывать интерактивное меню (по умолчанию меню, если TTY)
   --help                   Показать эту справку
+
+Переменные окружения:
+  ROOTLESS_USER            Пользователь для rootless Docker (не root). Приоритетнее, чем авто-определение.
 EOF
 }
 
@@ -144,6 +148,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --configure-wsl-conf) CONFIGURE_WSL_CONF=true ;;
     --rootless-docker)    ENABLE_ROOTLESS=true ;;
+    --rootless-user)      ROOTLESS_USER=${2:-}; shift ;;
     --install-cuda)       INSTALL_CUDA=true ;;
     --cuda-version)       CUDA_VERSION=${2:-}; shift ;;
     --cuda-auto-latest)   CUDA_AUTO_LATEST=true ;;
@@ -431,7 +436,7 @@ fi
 
 section "3b. Создание пользователя (опция)"
 if $DO_CREATE_USER; then
-  info "Создание нового пользователя с sudo..."
+  info "Создание/настройка пользователя с sudo..."
   NEW_USERNAME=${NEW_USERNAME:-}
   if [ -z "$NEW_USERNAME" ] && [ -r /dev/tty ]; then
     read -r -p "Введите имя нового пользователя: " NEW_USERNAME < /dev/tty
@@ -441,7 +446,42 @@ if $DO_CREATE_USER; then
   else
     ensure_pkg sudo
     if id "$NEW_USERNAME" >/dev/null 2>&1; then
-      warn "Пользователь '$NEW_USERNAME' уже существует. Пропускаем создание."
+      info "Пользователь '$NEW_USERNAME' уже существует. Применяем параметры..."
+      # Добавляем в группу sudo
+      if ! id -nG "$NEW_USERNAME" | grep -qw sudo; then
+        sudo_or_su usermod -aG sudo "$NEW_USERNAME" && ok "Добавлен в группу sudo." || warn "Не удалось добавить в sudo."
+      else
+        ok "Уже в группе sudo."
+      fi
+      # Настройка sudo без пароля
+      sudo_or_su mkdir -p /etc/sudoers.d
+      echo "$NEW_USERNAME ALL=(ALL) NOPASSWD: ALL" | sudo_or_su tee "/etc/sudoers.d/$NEW_USERNAME" >/dev/null
+      sudo_or_su chmod 440 "/etc/sudoers.d/$NEW_USERNAME"
+      ok "Sudo без пароля настроен."
+      # Смена оболочки входа на /bin/bash при необходимости
+      current_shell="$(getent passwd "$NEW_USERNAME" | awk -F: '{print $7}')"
+      if [ "$current_shell" != "/bin/bash" ]; then
+        sudo_or_su usermod -s /bin/bash "$NEW_USERNAME" && ok "Оболочка входа изменена на /bin/bash." || warn "Не удалось изменить оболочку."
+      fi
+      # Гарантируем домашнюю директорию
+      home_dir="$(getent passwd "$NEW_USERNAME" | cut -d: -f6)"
+      if [ -n "$home_dir" ] && [ ! -d "$home_dir" ]; then
+        sudo_or_su mkdir -p "$home_dir" && sudo_or_su chown -R "$NEW_USERNAME":"$NEW_USERNAME" "$home_dir"
+        ok "Создана домашняя директория: $home_dir"
+      fi
+      # Предложить смену пароля
+      if [ -r /dev/tty ]; then
+        read -r -p "Сменить пароль для '$NEW_USERNAME'? (y/N): " chpass < /dev/tty || chpass=""
+        if [[ "$chpass" =~ ^[yY]$ ]]; then
+          attempts=0
+          while true; do
+            if passwd "$NEW_USERNAME" < /dev/tty; then break; fi
+            attempts=$((attempts+1))
+            [ $attempts -ge 3 ] && { warn "Пароль не изменен после 3 попыток."; break; }
+            info "Ошибка изменения пароля. Повторите попытку."
+          done
+        fi
+      fi
     else
       sudo_or_su useradd -m -G sudo -s /bin/bash "$NEW_USERNAME" || warn "Не удалось создать пользователя"
       if [ -r /dev/tty ]; then
@@ -542,41 +582,89 @@ fi
 
 section "5. Rootless Docker (опция)"
 if $ENABLE_ROOTLESS; then
-  info "Настраиваем rootless Docker для пользователя: $USER"
-  ensure_pkg uidmap dbus-user-session slirp4netns fuse-overlayfs docker-ce-rootless-extras
-  # Устанавливаем rootless окружение
-  if command -v dockerd-rootless-setuptool.sh >/dev/null 2>&1; then
-    export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-}
-    if [ -z "$XDG_RUNTIME_DIR" ]; then
-      # Без systemd используем локальный runtime dir
-      export XDG_RUNTIME_DIR="$HOME/.local/run"
-      mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+  # Определяем целевого пользователя (не root)
+  TARGET_USER=${ROOTLESS_USER:-$DEFAULT_USER}
+  if [ -z "$TARGET_USER" ] || [ "$TARGET_USER" = "root" ]; then
+    if [ -r /dev/tty ]; then
+      read -r -p "Укажите пользователя для rootless Docker (не root): " TARGET_USER < /dev/tty
     fi
-    dockerd-rootless-setuptool.sh install -f || warn "Не удалось выполнить rootless setup"
-    # Настройки окружения для клиента
-    RL_SNIPPET='# WSL: rootless Docker\nexport XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$HOME/.local/run}"\nexport DOCKER_HOST="unix://$XDG_RUNTIME_DIR/docker.sock"\n'
-    for f in "$HOME/.bash_profile" "$HOME/.profile"; do
-      [ -f "$f" ] || touch "$f"
-      if ! grep -F "WSL: rootless Docker" "$f" >/dev/null 2>&1; then
-        printf "%b\n" "$RL_SNIPPET" >>"$f"
-        ok "Добавлены переменные окружения rootless Docker в ${f#${HOME}/}."
+  fi
+  if [ -z "$TARGET_USER" ] || [ "$TARGET_USER" = "root" ]; then
+    warn "Отказываюсь настраивать rootless Docker для root. Пропуск."
+  else
+    # Проверим, существует ли пользователь; при интерактивном запуске предложим создать
+    if ! id "$TARGET_USER" >/dev/null 2>&1; then
+      if [ -r /dev/tty ]; then
+        read -r -p "Пользователь '$TARGET_USER' не существует. Создать? (y/N): " create_it < /dev/tty || create_it=""
+        if [[ "$create_it" =~ ^[yY]$ ]]; then
+          info "Создаём пользователя '$TARGET_USER' с правами sudo..."
+          ensure_pkg sudo
+          sudo_or_su useradd -m -G sudo -s /bin/bash "$TARGET_USER" || { warn "Не удалось создать пользователя '$TARGET_USER'"; return 0; }
+          sudo_or_su mkdir -p /etc/sudoers.d
+          echo "$TARGET_USER ALL=(ALL) NOPASSWD: ALL" | sudo_or_su tee "/etc/sudoers.d/$TARGET_USER" >/dev/null
+          sudo_or_su chmod 440 "/etc/sudoers.d/$TARGET_USER"
+          if [ -r /dev/tty ]; then
+            read -r -p "Задать пароль для '$TARGET_USER'? (y/N): " setpw < /dev/tty || setpw=""
+            if [[ "$setpw" =~ ^[yY]$ ]]; then
+              passwd "$TARGET_USER" < /dev/tty || true
+            fi
+          fi
+          ok "Пользователь '$TARGET_USER' создан."
+        else
+          warn "Пользователь не создан. Пропускаем настройку rootless Docker."
+          return 0
+        fi
+      else
+        warn "Пользователь '$TARGET_USER' не существует и нет TTY для подтверждения создания. Пропуск rootless."
+        return 0
       fi
-    done
-    if has_user_systemd; then
-      systemctl --user enable --now docker.service || warn "Не удалось запустить user docker.service"
-    else
-      warn "Пользовательский systemd недоступен. Добавляем автостарт dockerd-rootless.sh в профиль."
-      START_SNIPPET='# WSL: запуск dockerd-rootless.sh при входе\nif ! pgrep -u "$USER" -f dockerd-rootless.sh >/dev/null 2>&1; then\n  nohup dockerd-rootless.sh >/dev/null 2>&1 &\nfi\n'
-      for f in "$HOME/.bash_profile" "$HOME/.profile"; do
-        if ! grep -F "WSL: запуск dockerd-rootless.sh" "$f" >/dev/null 2>&1; then
-          printf "%b\n" "$START_SNIPPET" >>"$f"
-          ok "Добавлен автостарт rootless демона в ${f#${HOME}/}."
+    fi
+    info "Настраиваем rootless Docker для пользователя: $TARGET_USER"
+    ensure_pkg uidmap dbus-user-session slirp4netns fuse-overlayfs docker-ce-rootless-extras
+    if command -v dockerd-rootless-setuptool.sh >/dev/null 2>&1; then
+      # Обеспечим XDG_RUNTIME_DIR для пользователя без systemd
+      TARGET_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
+      TARGET_XDG="$TARGET_HOME/.local/run"
+      sudo_or_su mkdir -p "$TARGET_XDG" && sudo_or_su chown -R "$TARGET_USER":"$TARGET_USER" "$TARGET_XDG" && sudo_or_su chmod 700 "$TARGET_XDG"
+      # Установим rootless как пользователь
+      if sudo -u "$TARGET_USER" env XDG_RUNTIME_DIR="$TARGET_XDG" bash -lc 'dockerd-rootless-setuptool.sh install -f'; then
+        setup_ok=true
+      else
+        setup_ok=false
+        warn "Не удалось выполнить rootless setup для $TARGET_USER"
+      fi
+      # Переменные окружения в профиль пользователя
+      RL_SNIPPET="# WSL: rootless Docker\nexport XDG_RUNTIME_DIR=\"\${XDG_RUNTIME_DIR:-$TARGET_XDG}\"\nexport DOCKER_HOST=\"unix://$TARGET_XDG/docker.sock\"\n"
+      for f in "$TARGET_HOME/.bash_profile" "$TARGET_HOME/.profile"; do
+        sudo -u "$TARGET_USER" bash -lc "[ -f '$f' ] || :"
+        if ! grep -F "WSL: rootless Docker" "$f" >/dev/null 2>&1; then
+          printf "%b\n" "$RL_SNIPPET" | sudo_or_su tee -a "$f" >/dev/null
+          sudo_or_su chown "$TARGET_USER":"$TARGET_USER" "$f"
+          ok "Добавлены переменные окружения rootless Docker в ${f#${TARGET_HOME}/}."
         fi
       done
+      # Попытка запустить user unit, если доступен user systemd
+      if has_user_systemd; then
+        if sudo -u "$TARGET_USER" systemctl --user enable --now docker.service; then
+          ok "user docker.service запущен."
+        else
+          warn "Не удалось запустить user docker.service"
+        fi
+      else
+        warn "Пользовательский systemd недоступен. Добавляем автостарт dockerd-rootless.sh в профиль пользователя."
+        START_SNIPPET="# WSL: запуск dockerd-rootless.sh при входе\nif ! pgrep -u \"$TARGET_USER\" -f dockerd-rootless.sh >/dev/null 2>&1; then\n  nohup dockerd-rootless.sh >/dev/null 2>&1 &\nfi\n"
+        for f in "$TARGET_HOME/.bash_profile" "$TARGET_HOME/.profile"; do
+          if ! grep -F "WSL: запуск dockerd-rootless.sh" "$f" >/dev/null 2>&1; then
+            printf "%b\n" "$START_SNIPPET" | sudo_or_su tee -a "$f" >/dev/null
+            sudo_or_su chown "$TARGET_USER":"$TARGET_USER" "$f"
+            ok "Добавлен автостарт rootless демона в ${f#${TARGET_HOME}/}."
+          fi
+        done
+      fi
+      $setup_ok && ok "Rootless Docker настроен." || warn "Rootless Docker настроен частично."
+    else
+      warn "dockerd-rootless-setuptool.sh не найден — проверьте пакет docker-ce-rootless-extras."
     fi
-    ok "Rootless Docker настроен."
-  else
-    warn "dockerd-rootless-setuptool.sh не найден — проверьте пакет docker-ce-rootless-extras."
   fi
 else
   info "Пропускаем настройку rootless Docker (не запрошено)."
