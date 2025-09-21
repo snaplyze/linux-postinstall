@@ -707,7 +707,7 @@ After=multi-user.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/sh -c 'for c in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do echo ${CPU_GOVERNOR} > "$c" 2>/dev/null || true; done'
+ ExecStart=/bin/sh -c 'for c in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do echo ${CPU_GOVERNOR} > "\$c" 2>/dev/null || true; done'
 
 [Install]
 WantedBy=multi-user.target
