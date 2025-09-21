@@ -275,9 +275,16 @@ interactive_menu() {
      systemctl is-active --quiet zramswap 2>/dev/null; then
     zram_active=true
   fi
-  if swapon --show | awk '{print $1}' | grep -qx '/swapfile' 2>/dev/null || \
-     { [ -f /swapfile ] && grep -q '/swapfile' /etc/fstab 2>/dev/null; }; then
+  # Проверим своп через /proc/swaps (без зависимости от утилит)
+  local swaps_file_count swaps_any
+  swaps_file_count=$(grep -cE '^/swapfile\s' /proc/swaps 2>/dev/null || echo 0)
+  swaps_any=$(awk 'NR>1 {c=1} END{print c+0}' /proc/swaps 2>/dev/null || echo 0)
+  if [ "$swaps_file_count" -gt 0 ] || { [ -f /swapfile ] && grep -q '/swapfile' /etc/fstab 2>/dev/null; }; then
     swap_active=true
+    swap_is_file=true
+  elif [ "$swaps_any" -gt 0 ]; then
+    swap_active=true
+    swap_is_file=false
   fi
 
   # Взаимоисключающий выбор ZRAM и swap
@@ -287,7 +294,11 @@ interactive_menu() {
     SETUP_SWAP=false
   else
     if $swap_active; then
-      green "✓ Swap-файл активен (уже настроено)"
+      if ${swap_is_file:-false}; then
+        green "✓ Swap-файл активен (уже настроено)"
+      else
+        green "✓ Swap активен (раздел/устройство)"
+      fi
       SETUP_ZRAM=false
       SETUP_SWAP=false
     else
