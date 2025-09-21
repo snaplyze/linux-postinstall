@@ -50,13 +50,14 @@
 - Что настраивает:
   - Обновления, базовые утилиты, локали (ru_RU/en_US), часовой пояс, NTP
   - Сеть: TCP BBR + fq, UFW (22/80/443), Fail2ban (sshd; пример nginx‑jail закомментирован)
+  - SSH: базовая настройка (secure.conf) и безопасное усиление (проверка наличия ключей перед отключением пароля)
   - Диски/память: TRIM (`fstrim.timer`), планировщик I/O (udev), ZRAM (или swap‑файл), swappiness=10
   - CPU: governor (по умолчанию `schedutil`) — подходит для Intel N5095
   - Логи/обновления: journald‑лимиты, logrotate, unattended‑upgrades
   - Мониторинг: sysstat, smartd (ежедневная проверка), lm‑sensors, iperf3, nmon
   - Docker CE + Buildx + Compose
-  - fish + Fisher + плагины (z, fzf.fish, autopair, done, bass), Starship, docker‑completions
-  - Опционально: ядро XanMod (amd64, автоподбор `x64v1–v3`)
+  - fish + Fisher + плагины (z, fzf.fish, autopair, done, bass), Starship, docker‑completions — для root, нового пользователя и существующего основного пользователя
+  - Опционально: ядро XanMod (amd64, автоподбор `x64v1–v3`); после установки выводится подсказка о перезагрузке с версией ядра
 
 —
 
