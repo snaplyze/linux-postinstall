@@ -778,6 +778,29 @@ FISHER_ROOT_SCRIPT_EOF
     configure_user_fish "$NEW_USERNAME"
   fi
 
+  # Если пользователь уже существовал (и мы его не создавали сейчас) — тоже настроим
+  DEFAULT_USER=""
+  if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    DEFAULT_USER="$SUDO_USER"
+  else
+    # Попробуем определить разумного пользователя
+    CANDIDATE="$(logname 2>/dev/null || true)"
+    if [ -n "$CANDIDATE" ] && [ "$CANDIDATE" != "root" ]; then
+      DEFAULT_USER="$CANDIDATE"
+    else
+      # Первый пользователь с UID >= 1000
+      CANDIDATE="$(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1; exit}' /etc/passwd)"
+      [ -n "$CANDIDATE" ] && DEFAULT_USER="$CANDIDATE"
+    fi
+  fi
+  if [ -n "$DEFAULT_USER" ] && [ "$DEFAULT_USER" != "root" ]; then
+    if ! $CREATE_USER || [ "$DEFAULT_USER" != "$NEW_USERNAME" ]; then
+      if id "$DEFAULT_USER" >/dev/null 2>&1; then
+        configure_user_fish "$DEFAULT_USER"
+      fi
+    fi
+  fi
+
   # Сделать fish оболочкой по умолчанию для root
   chsh -s /usr/bin/fish root || true
 fi
