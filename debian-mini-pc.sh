@@ -784,11 +784,17 @@ if $INSTALL_MONITORING; then
   step "Установка инструментов мониторинга"
   ensure_pkg sysstat smartmontools lm-sensors nmon iperf3
   systemctl enable --now sysstat || true
-  systemctl enable --now smartd || true
+  # smartd unit имя может отличаться; пробуем оба варианта
+  systemctl enable --now smartd 2>/dev/null || systemctl enable --now smartmontools 2>/dev/null || true
   # Базовая конфигурация smartd (проверка ежедневно)
   if [ -f /etc/smartd.conf ]; then
-    sed -i 's/^#*DEVICESCAN.*/DEVICESCAN -a -o on -S on -s (S/..\/../../(1|7)/ -m root/' /etc/smartd.conf || true
-    systemctl restart smartd || true
+    # Аккуратно заменим/добавим строку DEVICESCAN с расписанием на 02:00 ежедневно и уведомлением root
+    if grep -qE '^[#\s]*DEVICESCAN' /etc/smartd.conf; then
+      sed -i -E 's!^[#\s]*DEVICESCAN.*!DEVICESCAN -a -o on -S on -s (S/../.././02) -m root!' /etc/smartd.conf || true
+    else
+      printf '\nDEVICESCAN -a -o on -S on -s (S/../.././02) -m root\n' >> /etc/smartd.conf
+    fi
+    systemctl restart smartd 2>/dev/null || systemctl restart smartmontools 2>/dev/null || true
   fi
   sensors-detect --auto || true
 fi
@@ -843,13 +849,17 @@ if $INSTALL_XANMOD; then
       kernel_variant="x64v1"
     fi
 
-    if DEBIAN_FRONTEND=noninteractive apt-get install -y linux-xanmod-$kernel_variant; then
+    # Проверим доступность пакета до установки
+    if ! apt-cache policy linux-xanmod-$kernel_variant 2>/dev/null | awk '/Candidate:/ {print $2}' | grep -vq '(none)'; then
+      yellow "Пакет linux-xanmod-$kernel_variant недоступен для ${DEBIAN_VERSION_HUMAN}. Пропуск установки XanMod."
+    elif DEBIAN_FRONTEND=noninteractive apt-get install -y linux-xanmod-$kernel_variant; then
       green "✓ Установлено ядро linux-xanmod-$kernel_variant"
       xanmod_installed=true
       xanmod_installed_version=$(dpkg-query -W -f='${Version}' linux-xanmod-$kernel_variant 2>/dev/null || true)
     else
       red "Не удалось установить linux-xanmod-$kernel_variant. Пробуем стандартное linux-xanmod"
-      if DEBIAN_FRONTEND=noninteractive apt-get install -y linux-xanmod; then
+      if apt-cache policy linux-xanmod 2>/dev/null | awk '/Candidate:/ {print $2}' | grep -vq '(none)' && \
+         DEBIAN_FRONTEND=noninteractive apt-get install -y linux-xanmod; then
         green "✓ Установлено ядро linux-xanmod"
         xanmod_installed=true
         xanmod_installed_version=$(dpkg-query -W -f='${Version}' linux-xanmod 2>/dev/null || true)
