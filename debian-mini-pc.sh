@@ -42,6 +42,33 @@ green() { printf "\033[0;32m%s\033[0m\n" "$*"; }
 yellow(){ printf "\033[0;33m%s\033[0m\n" "$*"; }
 red()   { printf "\033[0;31m%s\033[0m\n" "$*"; }
 step()  { echo; printf "\033[1;32m>>> %s\033[0m\n" "$*"; }
+# Безопасная смена пароля (скрытый ввод, с подтверждением)
+set_user_password_interactive() {
+  local user="$1" pw1 pw2 tries=0
+  while [ $tries -lt 3 ]; do
+    tries=$((tries+1))
+    printf "Новый пароль: "
+    read -rs pw1; echo
+    printf "Повторите пароль: "
+    read -rs pw2; echo
+    if [ -z "$pw1" ]; then
+      yellow "Пустой пароль не допускается."
+      continue
+    fi
+    if [ "$pw1" = "$pw2" ]; then
+      if echo "$user:$pw1" | chpasswd 2>/dev/null; then
+        green "Пароль для пользователя $user обновлён."
+        return 0
+      else
+        red "Не удалось обновить пароль. Попробуйте снова."
+      fi
+    else
+      yellow "Пароли не совпадают. Попробуйте снова."
+    fi
+  done
+  red "Превышено число попыток смены пароля."
+  return 1
+}
 # Тихая подсказка серым цветом
 hint()  { printf "\033[0;90m    — %s\033[0m\n" "$*"; }
 thin()  { printf "\033[0;90m----------------------------------------\033[0m\n"; }
@@ -426,7 +453,7 @@ if $CREATE_USER; then
     if ! $NONINTERACTIVE; then
       read -r -p "Сменить пароль пользователя $NEW_USERNAME сейчас? (y/N): " change_pw
       case "$change_pw" in
-        y|Y) passwd "$NEW_USERNAME" ;; 
+        y|Y) set_user_password_interactive "$NEW_USERNAME" ;; 
       esac
     fi
   else
