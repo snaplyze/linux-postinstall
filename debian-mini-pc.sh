@@ -187,6 +187,13 @@ interactive_menu() {
     select_option "Базовые утилиты" "INSTALL_BASE_UTILS" "$base_utils_installed"
   fi
 
+  # Пользователи и hostname — сразу после базовых утилит
+  echo "  Текущий hostname: $(hostname)"
+  select_option "Изменить hostname" "CHANGE_HOSTNAME" false
+  select_option "Создать пользователя с sudo" "CREATE_USER" false
+  # Fish целесообразно выбирать рядом с пользователем
+  select_option "Установка и настройка fish shell (Fisher, Starship, fzf)" "INSTALL_FISH" false
+
   # Часовой пояс, локали, NTP
   echo "  Текущий часовой пояс: $(timedatectl show --property=Timezone --value || true)"
   select_option "Настройка часового пояса" "SETUP_TIMEZONE" false
@@ -203,13 +210,16 @@ interactive_menu() {
   else
     select_option "Включить TCP BBR + fq (сетевые оптимизации)" "SETUP_BBR" false
   fi
+  # SSH: базовая настройка (secure.conf; пароль разрешён)
   # Базовый SSH secure.conf уже присутствует?
   if { [ -f /etc/ssh/sshd_config ] && grep -q "prohibit-password" /etc/ssh/sshd_config; } || \
      grep -q "prohibit-password" /etc/ssh/sshd_config.d/secure.conf 2>/dev/null; then
-    green "✓ Настройка SSH (уже настроено)"
+    green "✓ SSH: базовая настройка (уже настроено)"
   else
-    select_option "Настройка SSH" "SETUP_SSH" false
+    select_option "SSH: базовая настройка (secure.conf; пароль разрешён)" "SETUP_SSH" false
   fi
+  # SSH: усиление (только ключи; отключить пароль)
+  select_option "SSH: усиление (только ключи; отключить пароль)" "SECURE_SSH" false
   if systemctl is-active --quiet fail2ban 2>/dev/null; then
     green "✓ Fail2ban (уже настроен)"
   else
@@ -286,11 +296,7 @@ interactive_menu() {
     select_option "Установить Docker и Docker Compose" "INSTALL_DOCKER" false
   fi
 
-  # Пользователи/hostname/SSH
-  select_option "Изменить hostname" "CHANGE_HOSTNAME" false
-  select_option "Создать пользователя с sudo" "CREATE_USER" false
-  select_option "Усилить безопасность SSH (отключить вход по паролю)" "SECURE_SSH" false
-  select_option "Установка и настройка fish shell (Fisher, Starship, fzf)" "INSTALL_FISH" false
+  # Завершение выбора
 
   echo
   yellow "Выбранные компоненты будут установлены."
@@ -319,36 +325,7 @@ if $INSTALL_BASE_UTILS; then
   ensure_pkg curl wget ca-certificates htop git nano mc smartmontools lm-sensors gnupg apt-transport-https software-properties-common
 fi
 
-# 2. Локали и часовой пояс, NTP
-if $SETUP_LOCALES; then
-  step "Настройка локалей"
-  ensure_pkg locales
-  # Включаем как минимум ru_RU.UTF-8 и en_US.UTF-8, плюс выбранную
-  ensure_locale "ru_RU.UTF-8" || true
-  ensure_locale "en_US.UTF-8" || true
-  if [ -n "$LOCALE_DEFAULT" ] && ensure_locale "$LOCALE_DEFAULT"; then
-    update-locale LANG="$LOCALE_DEFAULT"
-  else
-    update-locale LANG="$SYSTEM_LOCALE_DEFAULT"
-  fi
-fi
-
-if $SETUP_TIMEZONE; then
-  step "Настройка часового пояса"
-  if [ -n "$TIMEZONE" ]; then
-    timedatectl set-timezone "$TIMEZONE"
-  else
-    echo "Переменная TIMEZONE не задана; оставляем текущий: $(timedatectl show --property=Timezone --value || true)"
-  fi
-fi
-
-if $SETUP_NTP; then
-  step "Настройка NTP (systemd-timesyncd)"
-  ensure_pkg systemd-timesyncd
-  systemctl enable --now systemd-timesyncd
-fi
-
-# 3. Пользователь и hostname
+# 2. Пользователь и hostname (сразу после базовых утилит)
 if $CHANGE_HOSTNAME; then
   step "Изменение hostname"
   if [ -z "$NEW_HOSTNAME" ]; then
@@ -388,6 +365,35 @@ if $CREATE_USER; then
   echo "$NEW_USERNAME ALL=(ALL) NOPASSWD: ALL" > "/etc/sudoers.d/nopasswd-$NEW_USERNAME"
   echo "root ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/nopasswd-root
   chmod 440 "/etc/sudoers.d/nopasswd-$NEW_USERNAME" "/etc/sudoers.d/nopasswd-root"
+fi
+
+# 3. Локали и часовой пояс, NTP
+if $SETUP_LOCALES; then
+  step "Настройка локалей"
+  ensure_pkg locales
+  # Включаем как минимум ru_RU.UTF-8 и en_US.UTF-8, плюс выбранную
+  ensure_locale "ru_RU.UTF-8" || true
+  ensure_locale "en_US.UTF-8" || true
+  if [ -n "$LOCALE_DEFAULT" ] && ensure_locale "$LOCALE_DEFAULT"; then
+    update-locale LANG="$LOCALE_DEFAULT"
+  else
+    update-locale LANG="$SYSTEM_LOCALE_DEFAULT"
+  fi
+fi
+
+if $SETUP_TIMEZONE; then
+  step "Настройка часового пояса"
+  if [ -n "$TIMEZONE" ]; then
+    timedatectl set-timezone "$TIMEZONE"
+  else
+    echo "Переменная TIMEZONE не задана; оставляем текущий: $(timedatectl show --property=Timezone --value || true)"
+  fi
+fi
+
+if $SETUP_NTP; then
+  step "Настройка NTP (systemd-timesyncd)"
+  ensure_pkg systemd-timesyncd
+  systemctl enable --now systemd-timesyncd
 fi
 
 if $SECURE_SSH; then
