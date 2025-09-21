@@ -236,8 +236,39 @@ interactive_menu() {
   else
     select_option "SSD оптимизации: включить fstrim.timer, I/O планировщик" "SETUP_SSD" false
   fi
-  select_option "Настройка ZRAM (снижение износа SSD)" "SETUP_ZRAM" false
-  select_option "Создать swap-файл (50% ОЗУ; ≤3ГБ → 2ГБ)" "SETUP_SWAP" false
+  # Обнаружение уже настроенных ZRAM/swap
+  local zram_active=false swap_active=false
+  if grep -qE '^/dev/zram[0-9]+\s' /proc/swaps 2>/dev/null || \
+     systemctl is-active --quiet systemd-zram-setup@zram0.service 2>/dev/null || \
+     systemctl is-active --quiet zramswap 2>/dev/null; then
+    zram_active=true
+  fi
+  if swapon --show | awk '{print $1}' | grep -qx '/swapfile' 2>/dev/null || \
+     { [ -f /swapfile ] && grep -q '/swapfile' /etc/fstab 2>/dev/null; }; then
+    swap_active=true
+  fi
+
+  # Взаимоисключающий выбор ZRAM и swap
+  if $zram_active; then
+    green "✓ ZRAM активен (уже настроено)"
+    SETUP_ZRAM=false
+    SETUP_SWAP=false
+  else
+    if $swap_active; then
+      green "✓ Swap-файл активен (уже настроено)"
+      SETUP_ZRAM=false
+      SETUP_SWAP=false
+    else
+      select_option "Настройка ZRAM (снижение износа SSD)" "SETUP_ZRAM" false
+      if $SETUP_ZRAM; then
+        # Если выбран ZRAM, отключаем swap-файл
+        SETUP_SWAP=false
+      else
+        select_option "Создать swap-файл (50% ОЗУ; ≤3ГБ → 2ГБ)" "SETUP_SWAP" false
+        $SETUP_SWAP && SETUP_ZRAM=false
+      fi
+    fi
+  fi
   select_option "CPU governor для энергоэффективности (schedutil)" "SETUP_CPU_GOVERNOR" false
   select_option "Оптимизация sysctl (сеть/память)" "OPTIMIZE_SYSTEM" false
 
