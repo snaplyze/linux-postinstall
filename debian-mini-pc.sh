@@ -79,6 +79,7 @@ SETUP_AUTO_UPDATES=${SETUP_AUTO_UPDATES:-false}
 INSTALL_MONITORING=${INSTALL_MONITORING:-false}
 INSTALL_DOCKER=${INSTALL_DOCKER:-false}
 SECURE_SSH=${SECURE_SSH:-false}
+SETUP_SSH=${SETUP_SSH:-false}
 SETUP_FAIL2BAN=${SETUP_FAIL2BAN:-false}
 OPTIMIZE_SYSTEM=${OPTIMIZE_SYSTEM:-false}
 SETUP_SWAP=${SETUP_SWAP:-false}
@@ -197,6 +198,13 @@ interactive_menu() {
   else
     select_option "Включить TCP BBR + fq (сетевые оптимизации)" "SETUP_BBR" false
   fi
+  # Базовый SSH secure.conf уже присутствует?
+  if { [ -f /etc/ssh/sshd_config ] && grep -q "prohibit-password" /etc/ssh/sshd_config; } || \
+     grep -q "prohibit-password" /etc/ssh/sshd_config.d/secure.conf 2>/dev/null; then
+    green "✓ Настройка SSH (уже настроено)"
+  else
+    select_option "Настройка SSH" "SETUP_SSH" false
+  fi
   if systemctl is-active --quiet fail2ban 2>/dev/null; then
     green "✓ Fail2ban (уже настроен)"
   else
@@ -311,6 +319,13 @@ if $CHANGE_HOSTNAME; then
     red "NEW_HOSTNAME не задан"; exit 1
   fi
   hostnamectl set-hostname "$NEW_HOSTNAME"
+  # Обновим /etc/hosts, как в debian-vps.sh
+  if ! grep -q "$NEW_HOSTNAME" /etc/hosts; then
+    sed -i "s/127.0.1.1.*/127.0.1.1\t$NEW_HOSTNAME/g" /etc/hosts || true
+    if ! grep -q "127.0.1.1" /etc/hosts; then
+      echo "127.0.1.1\t$NEW_HOSTNAME" >> /etc/hosts
+    fi
+  fi
 fi
 
 if $CREATE_USER; then
@@ -332,13 +347,37 @@ if $CREATE_USER; then
   if [ -n "$SSH_PUBLIC_KEY" ]; then
     echo "$SSH_PUBLIC_KEY" >> "/home/$NEW_USERNAME/.ssh/authorized_keys"
   fi
+  # Как в debian-vps.sh: NOPASSWD sudo для root и нового пользователя
+  mkdir -p /etc/sudoers.d
+  echo "$NEW_USERNAME ALL=(ALL) NOPASSWD: ALL" > "/etc/sudoers.d/nopasswd-$NEW_USERNAME"
+  echo "root ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/nopasswd-root
+  chmod 440 "/etc/sudoers.d/nopasswd-$NEW_USERNAME" "/etc/sudoers.d/nopasswd-root"
 fi
 
 if $SECURE_SSH; then
   step "Усиление SSH"
   ensure_pkg openssh-server
-  mkdir -p /etc/ssh/sshd_config.d
-  cat >/etc/ssh/sshd_config.d/secure.conf <<'CONF'
+  # Проверим наличие SSH ключей, чтобы не запереть доступ
+  ssh_key_exists=false
+  if $CREATE_USER && [ -n "$NEW_USERNAME" ] && [ -s "/home/$NEW_USERNAME/.ssh/authorized_keys" ]; then
+    ssh_key_exists=true
+  elif [ -s "/root/.ssh/authorized_keys" ]; then
+    ssh_key_exists=true
+  elif [ -n "${SUDO_USER:-}" ] && [ -s "/home/$SUDO_USER/.ssh/authorized_keys" ]; then
+    ssh_key_exists=true
+  fi
+  if ! $ssh_key_exists; then
+    if $NONINTERACTIVE; then
+      yellow "SECURE_SSH=true без SSH ключей — пропускаем, чтобы не потерять доступ"
+      SECURE_SSH=false
+    else
+      read -r -p "Не найден SSH ключ. Всё равно отключить вход по паролю? (y/N): " ans
+      case "$ans" in y|Y) ;; *) SECURE_SSH=false;; esac
+    fi
+  fi
+  if $SECURE_SSH; then
+    mkdir -p /etc/ssh/sshd_config.d
+    cat >/etc/ssh/sshd_config.d/security.conf <<'CONF'
 PasswordAuthentication no
 PermitRootLogin prohibit-password
 PubkeyAuthentication yes
@@ -346,7 +385,8 @@ ChallengeResponseAuthentication no
 UsePAM yes
 KbdInteractiveAuthentication no
 CONF
-  systemctl reload ssh || systemctl restart ssh || true
+    systemctl restart sshd || systemctl reload ssh || true
+  fi
 fi
 
 # 4. Сетевые оптимизации
@@ -813,4 +853,24 @@ if $AUTO_REBOOT; then
   reboot
 else
   yellow "Рекомендуется перезагрузить систему, чтобы применить все изменения."
+fi
+# 4.0 Базовая настройка SSH (как в debian-vps.sh)
+if $SETUP_SSH; then
+  step "Настройка базовой безопасности SSH"
+  ensure_pkg openssh-server
+  [ -f /etc/ssh/sshd_config ] && cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak || true
+  mkdir -p /etc/ssh/sshd_config.d/
+  cat > /etc/ssh/sshd_config.d/secure.conf << 'EOF'
+# Безопасные настройки SSH
+PermitRootLogin prohibit-password
+PasswordAuthentication yes
+ChallengeResponseAuthentication no
+UsePAM yes
+X11Forwarding no
+AllowTcpForwarding yes
+AllowAgentForwarding yes
+PrintMotd no
+AcceptEnv LANG LC_*
+EOF
+  systemctl restart sshd || systemctl reload ssh || true
 fi
