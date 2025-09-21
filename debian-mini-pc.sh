@@ -40,6 +40,9 @@ green() { printf "\033[0;32m%s\033[0m\n" "$*"; }
 yellow(){ printf "\033[0;33m%s\033[0m\n" "$*"; }
 red()   { printf "\033[0;31m%s\033[0m\n" "$*"; }
 step()  { echo; printf "\033[1;32m>>> %s\033[0m\n" "$*"; }
+# Тихая подсказка серым цветом
+hint()  { printf "\033[0;90m    — %s\033[0m\n" "$*"; }
+thin()  { printf "\033[0;90m----------------------------------------\033[0m\n"; }
 
 is_installed() { dpkg -l 2>/dev/null | awk '{print $1,$2}' | grep -q "^ii ${1}$"; }
 
@@ -200,6 +203,7 @@ interactive_menu() {
   select_option "Изменить hostname" "CHANGE_HOSTNAME" false
   select_option "Создать пользователя с sudo" "CREATE_USER" false
   # Fish целесообразно выбирать рядом с пользователем
+  hint "fish + Fisher + Starship + плагины"
   select_option "Установка и настройка fish shell (Fisher, Starship, fzf)" "INSTALL_FISH" false
 
   # Часовой пояс, локали, NTP
@@ -218,6 +222,7 @@ interactive_menu() {
   if [ "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo '')" = "bbr" ]; then
     green "✓ TCP BBR (уже включен)"
   else
+    hint "рекомендуется для серверов/P2P; снижает задержки"
     select_option "Включить TCP BBR + fq (сетевые оптимизации)" "SETUP_BBR" false
   fi
   # SSH: базовая настройка (secure.conf; пароль разрешён)
@@ -226,18 +231,22 @@ interactive_menu() {
      grep -q "prohibit-password" /etc/ssh/sshd_config.d/secure.conf 2>/dev/null; then
     green "✓ SSH: базовая настройка (уже настроено)"
   else
+    hint "безопасные defaults; вход по паролю пока разрешён"
     select_option "SSH: базовая настройка (secure.conf; пароль разрешён)" "SETUP_SSH" false
   fi
   # SSH: усиление (только ключи; отключить пароль)
+  hint "только по ключам; убедитесь, что ключи добавлены"
   select_option "SSH: усиление (только ключи; отключить пароль)" "SECURE_SSH" false
   if systemctl is-active --quiet fail2ban 2>/dev/null; then
     green "✓ Fail2ban (уже настроен)"
   else
+    hint "защита от брутфорса sshd; рекомендуется"
     select_option "Установить и настроить Fail2ban (sshd)" "SETUP_FAIL2BAN" false
   fi
   if is_installed ufw && systemctl is-active --quiet ufw; then
     green "✓ Firewall UFW (уже настроен)"
   else
+    hint "deny incoming, allow outgoing; откроем 22/80/443"
     select_option "Настроить Firewall (UFW, разрешить SSH)" "SETUP_FIREWALL" false
   fi
 
@@ -246,6 +255,7 @@ interactive_menu() {
     green "✓ Ядро XanMod (уже установлено)"
   else
     if [ "$(dpkg --print-architecture)" = "amd64" ]; then
+      hint "опционально: улучшенная отзывчивость/производительность"
       select_option "Установка оптимизированного ядра XanMod" "INSTALL_XANMOD" false
     fi
   fi
@@ -255,6 +265,7 @@ interactive_menu() {
   if systemctl is-enabled --quiet fstrim.timer; then
     green "✓ SSD оптимизации: fstrim.timer включен"
   else
+    hint "включает регулярный TRIM; на SATA — mq-deadline"
     select_option "SSD оптимизации: включить fstrim.timer, I/O планировщик" "SETUP_SSD" false
   fi
   # Обнаружение уже настроенных ZRAM/swap
@@ -280,32 +291,40 @@ interactive_menu() {
       SETUP_ZRAM=false
       SETUP_SWAP=false
     else
+      hint "рекомендуется: ZRAM снижает износ SSD"
       select_option "Настройка ZRAM (снижение износа SSD)" "SETUP_ZRAM" false
       if $SETUP_ZRAM; then
         # Если выбран ZRAM, отключаем swap-файл
         SETUP_SWAP=false
       else
+        hint "альтернатива ZRAM; медленнее, но совместимо везде"
         select_option "Создать swap-файл (50% ОЗУ; ≤3ГБ → 2ГБ)" "SETUP_SWAP" false
         $SETUP_SWAP && SETUP_ZRAM=false
       fi
     fi
   fi
+  hint "schedutil — баланс производительности и энергопотребления"
   select_option "CPU governor для энергоэффективности (schedutil)" "SETUP_CPU_GOVERNOR" false
+  hint "умеренные параметры сети/памяти"
   select_option "Оптимизация sysctl (сеть/память)" "OPTIMIZE_SYSTEM" false
 
   # Логи/обновления/мониторинг/Docker
   group "Логи и Обновления"
+  hint "лимитирует размер журналов systemd"
   select_option "Настройка logrotate и journald (лимиты)" "SETUP_LOGROTATE" false
   if is_installed unattended-upgrades; then
     green "✓ Автообновления безопасности (уже настроено)"
   else
+    hint "обновления безопасности без участия пользователя"
     select_option "Включить автообновления безопасности" "SETUP_AUTO_UPDATES" false
   fi
   group "Мониторинг и Docker"
+  hint "sysstat, smartd, lm-sensors, iperf3, nmon"
   select_option "Инструменты мониторинга (sysstat, smartmontools, sensors)" "INSTALL_MONITORING" false
   if is_installed docker-ce && is_installed docker-compose-plugin; then
     green "✓ Docker и Docker Compose (уже установлены)"
   else
+    hint "официальный репозиторий Docker CE + Compose"
     select_option "Установить Docker и Docker Compose" "INSTALL_DOCKER" false
   fi
 
