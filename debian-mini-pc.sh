@@ -420,6 +420,13 @@ if $CREATE_USER; then
   fi
   if id "$NEW_USERNAME" >/dev/null 2>&1; then
     yellow "Пользователь $NEW_USERNAME уже существует"
+    # Предложить смену пароля для существующего пользователя (только интерактивно)
+    if ! $NONINTERACTIVE; then
+      read -r -p "Сменить пароль пользователя $NEW_USERNAME сейчас? (y/N): " change_pw
+      case "$change_pw" in
+        y|Y) passwd "$NEW_USERNAME" ;; 
+      esac
+    fi
   else
     adduser --gecos "" "$NEW_USERNAME"
   fi
