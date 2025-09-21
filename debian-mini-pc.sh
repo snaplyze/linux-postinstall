@@ -164,6 +164,12 @@ interactive_menu() {
   blue "╚═════════════════════════════════════════╝"
   echo
 
+  # Визуальный разделитель для групп меню
+  group() {
+    echo
+    printf "\033[0;34m════════ %s ════════\033[0m\n" "$*"
+  }
+
   # Системные обновления недавние?
   local apt_update_time current_time time_diff sys_updated=false
   apt_update_time=$(stat -c %Y /var/cache/apt/pkgcache.bin 2>/dev/null || echo 0)
@@ -177,6 +183,7 @@ interactive_menu() {
   fi
 
   # Базовые утилиты
+  group "Базовые утилиты"
   local base_utils_installed=true util
   for util in curl wget htop git nano mc smartmontools lm-sensors; do
     if ! is_installed "$util"; then base_utils_installed=false; break; fi
@@ -188,6 +195,7 @@ interactive_menu() {
   fi
 
   # Пользователи и hostname — сразу после базовых утилит
+  group "Пользователи и Hostname"
   echo "  Текущий hostname: $(hostname)"
   select_option "Изменить hostname" "CHANGE_HOSTNAME" false
   select_option "Создать пользователя с sudo" "CREATE_USER" false
@@ -195,6 +203,7 @@ interactive_menu() {
   select_option "Установка и настройка fish shell (Fisher, Starship, fzf)" "INSTALL_FISH" false
 
   # Часовой пояс, локали, NTP
+  group "Локали и Время"
   echo "  Текущий часовой пояс: $(timedatectl show --property=Timezone --value || true)"
   select_option "Настройка часового пояса" "SETUP_TIMEZONE" false
   select_option "Настройка локалей (включая ru_RU.UTF-8)" "SETUP_LOCALES" false
@@ -205,6 +214,7 @@ interactive_menu() {
   fi
 
   # Сеть и безопасность
+  group "Сеть и Безопасность"
   if [ "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo '')" = "bbr" ]; then
     green "✓ TCP BBR (уже включен)"
   else
@@ -241,6 +251,7 @@ interactive_menu() {
   fi
 
   # Диски/память/энергосбережение
+  group "Диски и Память"
   if systemctl is-enabled --quiet fstrim.timer; then
     green "✓ SSD оптимизации: fstrim.timer включен"
   else
@@ -283,12 +294,14 @@ interactive_menu() {
   select_option "Оптимизация sysctl (сеть/память)" "OPTIMIZE_SYSTEM" false
 
   # Логи/обновления/мониторинг/Docker
+  group "Логи и Обновления"
   select_option "Настройка logrotate и journald (лимиты)" "SETUP_LOGROTATE" false
   if is_installed unattended-upgrades; then
     green "✓ Автообновления безопасности (уже настроено)"
   else
     select_option "Включить автообновления безопасности" "SETUP_AUTO_UPDATES" false
   fi
+  group "Мониторинг и Docker"
   select_option "Инструменты мониторинга (sysstat, smartmontools, sensors)" "INSTALL_MONITORING" false
   if is_installed docker-ce && is_installed docker-compose-plugin; then
     green "✓ Docker и Docker Compose (уже установлены)"
