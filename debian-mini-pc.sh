@@ -366,7 +366,8 @@ fi
 
 if $INSTALL_BASE_UTILS; then
   step "Установка базовых утилит"
-  ensure_pkg curl wget ca-certificates htop git nano mc smartmontools lm-sensors gnupg apt-transport-https software-properties-common
+  # Примечание: в Debian 12/13 apt-transport-https встроен в apt; software-properties-common может отсутствовать.
+  ensure_pkg curl wget ca-certificates htop git nano mc smartmontools lm-sensors gnupg
 fi
 
 # 2. Пользователь и hostname (сразу после базовых утилит)
