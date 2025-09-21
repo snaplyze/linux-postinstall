@@ -3,6 +3,8 @@
 # Цель: безопасная и повторяемая настройка headless-сервера c упором на SSD, энергоэффективность и базовую безопасность
 
 set -Eeuo pipefail
+# Гарантируем наличие системных путей для утилит администрирования (usermod, etc.)
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 # -------- Проверки окружения --------
 if [ "$(id -u)" -ne 0 ]; then
@@ -430,7 +432,12 @@ if $CREATE_USER; then
   else
     adduser --gecos "" "$NEW_USERNAME"
   fi
-  usermod -aG sudo "$NEW_USERNAME"
+  # Добавление в группу sudo (с учётом того, что usermod может быть в /usr/sbin)
+  if command -v usermod >/dev/null 2>&1; then
+    usermod -aG sudo "$NEW_USERNAME"
+  else
+    /usr/sbin/usermod -aG sudo "$NEW_USERNAME"
+  fi
   mkdir -p "/home/$NEW_USERNAME/.ssh"
   touch "/home/$NEW_USERNAME/.ssh/authorized_keys"
   chown -R "$NEW_USERNAME:$NEW_USERNAME" "/home/$NEW_USERNAME/.ssh"
@@ -454,6 +461,8 @@ if $CREATE_USER; then
   echo "$NEW_USERNAME ALL=(ALL) NOPASSWD: ALL" > "/etc/sudoers.d/nopasswd-$NEW_USERNAME"
   echo "root ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/nopasswd-root
   chmod 440 "/etc/sudoers.d/nopasswd-$NEW_USERNAME" "/etc/sudoers.d/nopasswd-root"
+
+  green "Параметры пользователя $NEW_USERNAME применены: добавлен в группу sudo (NOPASSWD), директория SSH подготовлена."
 fi
 
 # 3. Локали и часовой пояс, NTP
