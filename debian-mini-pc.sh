@@ -638,6 +638,7 @@ if $INSTALL_XANMOD; then
     yellow "Архитектура $arch не поддерживается сборками linux-xanmod-x64v*. Пропуск."
   else
     mkdir -p /etc/apt/keyrings
+    ensure_pkg wget gnupg
     wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor -o /etc/apt/keyrings/xanmod-archive-keyring.gpg
     echo 'deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' > /etc/apt/sources.list.d/xanmod-release.list
     apt-get update -y
