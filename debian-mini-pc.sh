@@ -401,6 +401,8 @@ fi
 
 if $CREATE_USER; then
   step "Создание пользователя с sudo"
+  # Убедимся, что необходимые утилиты для управления пользователями установлены
+  ensure_pkg adduser sudo passwd
   if [ -z "$NEW_USERNAME" ]; then
     if $NONINTERACTIVE; then
       red "NEW_USERNAME не задан"; exit 1
@@ -797,6 +799,13 @@ fi
 if $INSTALL_FISH; then
   step "Установка и настройка fish shell"
   ensure_pkg fish fzf fd-find bat git curl
+  # Совместимость бинарей Debian: fd-find -> fd, batcat -> bat
+  if command -v fdfind >/dev/null 2>&1 && ! command -v fd >/dev/null 2>&1; then
+    ln -sf "$(command -v fdfind)" /usr/local/bin/fd
+  fi
+  if command -v batcat >/dev/null 2>&1 && ! command -v bat >/dev/null 2>&1; then
+    ln -sf "$(command -v batcat)" /usr/local/bin/bat
+  fi
 
   # Starship
   if ! command -v starship >/dev/null 2>&1; then
