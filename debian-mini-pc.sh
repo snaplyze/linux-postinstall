@@ -374,7 +374,20 @@ fi
 if $CHANGE_HOSTNAME; then
   step "Изменение hostname"
   if [ -z "$NEW_HOSTNAME" ]; then
-    red "NEW_HOSTNAME не задан"; exit 1
+    if $NONINTERACTIVE; then
+      red "NEW_HOSTNAME не задан"; exit 1
+    else
+      # Интерактивный ввод hostname с проверкой
+      while true; do
+        read -r -p "Введите новое имя хоста: " NEW_HOSTNAME
+        # Имя хоста: a-z0-9 и '-', начинается/заканчивается буквой/цифрой, длина <=63
+        if [[ "$NEW_HOSTNAME" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] && [ ${#NEW_HOSTNAME} -le 63 ]; then
+          break
+        else
+          yellow "Некорректное имя. Допустимы: строчные буквы, цифры, дефис; длина до 63."
+        fi
+      done
+    fi
   fi
   hostnamectl set-hostname "$NEW_HOSTNAME"
   # Обновим /etc/hosts, как в debian-vps.sh
@@ -389,7 +402,19 @@ fi
 if $CREATE_USER; then
   step "Создание пользователя с sudo"
   if [ -z "$NEW_USERNAME" ]; then
-    red "NEW_USERNAME не задан"; exit 1
+    if $NONINTERACTIVE; then
+      red "NEW_USERNAME не задан"; exit 1
+    else
+      # Интерактивный ввод имени пользователя с проверкой
+      while true; do
+        read -r -p "Введите имя пользователя: " NEW_USERNAME
+        if [[ "$NEW_USERNAME" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] && [ ${#NEW_USERNAME} -le 32 ]; then
+          break
+        else
+          yellow "Некорректное имя. Пример: admin, service_user, user1"
+        fi
+      done
+    fi
   fi
   if id "$NEW_USERNAME" >/dev/null 2>&1; then
     yellow "Пользователь $NEW_USERNAME уже существует"
@@ -404,6 +429,16 @@ if $CREATE_USER; then
   chmod 600 "/home/$NEW_USERNAME/.ssh/authorized_keys"
   if [ -n "$SSH_PUBLIC_KEY" ]; then
     echo "$SSH_PUBLIC_KEY" >> "/home/$NEW_USERNAME/.ssh/authorized_keys"
+  else
+    if ! $NONINTERACTIVE; then
+      read -r -p "Добавить SSH публичный ключ для $NEW_USERNAME сейчас? (y/N): " addkey
+      case "$addkey" in
+        y|Y)
+          read -r -p "Вставьте ключ (ssh-ed25519/ssh-rsa ...): " input_key
+          if [ -n "$input_key" ]; then echo "$input_key" >> "/home/$NEW_USERNAME/.ssh/authorized_keys"; fi
+          ;;
+      esac
+    fi
   fi
   # Как в debian-vps.sh: NOPASSWD sudo для root и нового пользователя
   mkdir -p /etc/sudoers.d
