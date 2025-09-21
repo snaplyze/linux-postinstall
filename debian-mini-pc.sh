@@ -86,6 +86,11 @@ SETUP_SWAP=${SETUP_SWAP:-false}
 INSTALL_FISH=${INSTALL_FISH:-false}
 INSTALL_XANMOD=${INSTALL_XANMOD:-false}
 
+# Служебные переменные для XanMod
+xanmod_installed=false
+xanmod_installed_version=""
+kernel_variant=""
+
 AUTO_REBOOT=${AUTO_REBOOT:-false}
 
 SYSTEM_LOCALE_DEFAULT="$(locale 2>/dev/null | awk -F= '/^LANG=/{print $2}' | tail -n1)"
@@ -656,10 +661,14 @@ if $INSTALL_XANMOD; then
 
     if DEBIAN_FRONTEND=noninteractive apt-get install -y linux-xanmod-$kernel_variant; then
       green "✓ Установлено ядро linux-xanmod-$kernel_variant"
+      xanmod_installed=true
+      xanmod_installed_version=$(dpkg-query -W -f='${Version}' linux-xanmod-$kernel_variant 2>/dev/null || true)
     else
       red "Не удалось установить linux-xanmod-$kernel_variant. Пробуем стандартное linux-xanmod"
       if DEBIAN_FRONTEND=noninteractive apt-get install -y linux-xanmod; then
         green "✓ Установлено ядро linux-xanmod"
+        xanmod_installed=true
+        xanmod_installed_version=$(dpkg-query -W -f='${Version}' linux-xanmod 2>/dev/null || true)
       else
         red "✗ Не удалось установить XanMod. Продолжаем с текущим ядром."
       fi
@@ -849,6 +858,13 @@ fi
 # Итог
 echo
 green "Готово. ${DEBIAN_VERSION_HUMAN} настроен для мини-ПК (домашний сервер)."
+if $INSTALL_XANMOD && $xanmod_installed; then
+  echo
+  yellow "Ядро XanMod установлено. Для активации требуется перезагрузка."
+  if [ -n "$xanmod_installed_version" ]; then
+    echo "  Версия ядра XanMod: $xanmod_installed_version${kernel_variant:+ ($kernel_variant)}"
+  fi
+fi
 if $AUTO_REBOOT; then
   yellow "Перезагрузка..."
   reboot
