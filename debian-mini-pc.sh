@@ -276,13 +276,14 @@ interactive_menu() {
     zram_active=true
   fi
   # Проверим своп через /proc/swaps (без зависимости от утилит)
-  local swaps_file_count swaps_any
-  swaps_file_count=$(grep -cE '^/swapfile\s' /proc/swaps 2>/dev/null || echo 0)
-  swaps_any=$(awk 'NR>1 {c=1} END{print c+0}' /proc/swaps 2>/dev/null || echo 0)
-  if [ "$swaps_file_count" -gt 0 ] || { [ -f /swapfile ] && grep -q '/swapfile' /etc/fstab 2>/dev/null; }; then
+  local swap_file_in_proc swap_file_in_fstab swaps_any
+  swap_file_in_proc=$(grep -qE '^/swapfile\s' /proc/swaps 2>/dev/null && echo 1 || echo 0)
+  swap_file_in_fstab=$(grep -qs '/swapfile' /etc/fstab 2>/dev/null && echo 1 || echo 0)
+  swaps_any=$(awk 'NR>1{f=1} END{print f?1:0}' /proc/swaps 2>/dev/null || echo 0)
+  if { [ "$swap_file_in_proc" -eq 1 ] || { [ -f /swapfile ] && [ "$swap_file_in_fstab" -eq 1 ]; }; } then
     swap_active=true
     swap_is_file=true
-  elif [ "$swaps_any" -gt 0 ]; then
+  elif [ "$swaps_any" -eq 1 ]; then
     swap_active=true
     swap_is_file=false
   fi
