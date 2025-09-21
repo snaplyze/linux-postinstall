@@ -59,6 +59,31 @@
   - fish + Fisher + плагины (z, fzf.fish, autopair, done, bass), Starship, docker‑completions — для root, нового пользователя и существующего основного пользователя
   - Опционально: ядро XanMod (amd64, автоподбор `x64v1–v3`); после установки выводится подсказка о перезагрузке с версией ядра
 
+- Особенности меню:
+  - Группы: «Базовые утилиты», «Пользователи и Hostname», «Локали и Время», «Сеть и Безопасность», «Диски и Память», «Логи и Обновления», «Мониторинг и Docker».
+  - Подсказки серым: краткие рекомендации к пунктам (BBR, ZRAM/Swap, SSH, UFW, journald, monitoring, Docker).
+  - SSH разделён на 2 шага: «базовая настройка» и «усиление» (только ключи) — второй шаг безопасно пропускается, если ключей нет.
+  - ZRAM и Swap взаимоисключающие; автоматически определяется уже активный ZRAM/Swap (включая swap‑разделы) через `/proc/swaps`.
+  - Пользователь/hostname идут сразу после базовых утилит; при выборе скрипт запросит значения с валидацией, если они не заданы.
+
+- Поведение с существующим пользователем:
+  - Добавляется в `sudo` (оставляя пароли), можно сменить пароль (интерактивный запрос).
+  - Создаются `~/.ssh` и `authorized_keys`, можно сразу добавить ключ (интерактивно, если `SSH_PUBLIC_KEY` не задан).
+  - fish конфигурируется для root, созданного/существующего пользователя; на Debian добавляются алиасы `fd`→`fdfind`, `bat`→`batcat`.
+
+- Переменные для автоматизации (основные):
+  - `NONINTERACTIVE=true` — не задавать вопросы (требуются остальные флаги).
+  - `UPDATE_SYSTEM`, `INSTALL_BASE_UTILS`, `SETUP_TIMEZONE`, `TIMEZONE`, `SETUP_LOCALES`, `LOCALE_DEFAULT`, `SETUP_NTP`.
+  - `CHANGE_HOSTNAME`, `NEW_HOSTNAME`, `CREATE_USER`, `NEW_USERNAME`, `SSH_PUBLIC_KEY`.
+  - `SETUP_SSH`, `SECURE_SSH`, `SETUP_BBR`, `SETUP_FAIL2BAN`, `SETUP_FIREWALL`.
+  - `SETUP_SSD`, `SETUP_ZRAM`, `SETUP_SWAP`, `SETUP_CPU_GOVERNOR`, `CPU_GOVERNOR`, `OPTIMIZE_SYSTEM`.
+  - `SETUP_LOGROTATE`, `SETUP_AUTO_UPDATES`, `INSTALL_MONITORING`, `INSTALL_DOCKER`, `INSTALL_XANMOD`.
+
+- Запуск через curl и кэш:
+  - Скрипт по URL тянет содержимое из удалённого репозитория; запустите `git push`, чтобы обновить.
+  - Для обхода кэша GitHub:
+    - `bash <(curl -fsSL -H 'Cache-Control: no-cache' 'https://raw.githubusercontent.com/snaplyze/linux-postinstall/main/debian-mini-pc.sh?ts='$(date +%s)))`
+
 —
 
 **Обновление Debian 12 → 13**
