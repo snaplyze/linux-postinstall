@@ -478,6 +478,28 @@ if $SETUP_NTP; then
   systemctl enable --now systemd-timesyncd
 fi
 
+## 3.1 Базовая настройка SSH (как в debian-vps.sh)
+if $SETUP_SSH; then
+  step "Настройка базовой безопасности SSH"
+  ensure_pkg openssh-server
+  [ -f /etc/ssh/sshd_config ] && cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak || true
+  mkdir -p /etc/ssh/sshd_config.d/
+  cat > /etc/ssh/sshd_config.d/secure.conf << 'EOF'
+# Безопасные настройки SSH
+PermitRootLogin prohibit-password
+PasswordAuthentication yes
+ChallengeResponseAuthentication no
+UsePAM yes
+X11Forwarding no
+AllowTcpForwarding yes
+AllowAgentForwarding yes
+PrintMotd no
+AcceptEnv LANG LC_*
+EOF
+  systemctl restart sshd || systemctl reload ssh || true
+fi
+
+## 3.2 Усиление SSH
 if $SECURE_SSH; then
   step "Усиление SSH"
   ensure_pkg openssh-server
@@ -981,7 +1003,7 @@ FISHER_ROOT_SCRIPT_EOF
   chsh -s /usr/bin/fish root || true
 fi
 
-# Итог
+## Итог
 echo
 green "Готово. ${DEBIAN_VERSION_HUMAN} настроен для мини-ПК (домашний сервер)."
 if $INSTALL_XANMOD && $xanmod_installed; then
@@ -996,24 +1018,4 @@ if $AUTO_REBOOT; then
   reboot
 else
   yellow "Рекомендуется перезагрузить систему, чтобы применить все изменения."
-fi
-# 4.0 Базовая настройка SSH (как в debian-vps.sh)
-if $SETUP_SSH; then
-  step "Настройка базовой безопасности SSH"
-  ensure_pkg openssh-server
-  [ -f /etc/ssh/sshd_config ] && cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak || true
-  mkdir -p /etc/ssh/sshd_config.d/
-  cat > /etc/ssh/sshd_config.d/secure.conf << 'EOF'
-# Безопасные настройки SSH
-PermitRootLogin prohibit-password
-PasswordAuthentication yes
-ChallengeResponseAuthentication no
-UsePAM yes
-X11Forwarding no
-AllowTcpForwarding yes
-AllowAgentForwarding yes
-PrintMotd no
-AcceptEnv LANG LC_*
-EOF
-  systemctl restart sshd || systemctl reload ssh || true
 fi
