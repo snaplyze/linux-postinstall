@@ -42,6 +42,16 @@ green() { printf "\033[0;32m%s\033[0m\n" "$*"; }
 yellow(){ printf "\033[0;33m%s\033[0m\n" "$*"; }
 red()   { printf "\033[0;31m%s\033[0m\n" "$*"; }
 step()  { echo; printf "\033[1;32m>>> %s\033[0m\n" "$*"; }
+# Определение уровня x86-64 (приблизительно по флагам CPU)
+psabi_level() {
+  if grep -qE '\bavx2\b|\bavx512' /proc/cpuinfo 2>/dev/null; then
+    echo v3
+  elif grep -q '\bavx\b' /proc/cpuinfo 2>/dev/null; then
+    echo v2
+  else
+    echo v1
+  fi
+}
 # Безопасная смена пароля (скрытый ввод, с подтверждением)
 set_user_password_interactive() {
   local user="$1" pw1 pw2 tries=0
@@ -509,7 +519,7 @@ fi
 if $SETUP_TIMEZONE; then
   step "Настройка часового пояса"
   if [ -n "$TIMEZONE" ]; then
-    timedatectl set-timezone "$TIMEZONE"
+    timedatectl set-timezone "$TIMEZONE" && green "Часовой пояс установлен: $(timedatectl show --property=Timezone --value 2>/dev/null || echo "$TIMEZONE")"
   else
     if $NONINTERACTIVE; then
       echo "Переменная TIMEZONE не задана; оставляем текущий: $(timedatectl show --property=Timezone --value || true)"
@@ -538,7 +548,11 @@ if $SETUP_TIMEZONE; then
         *) TIMEZONE="$(timedatectl show --property=Timezone --value 2>/dev/null || echo UTC)" ;;
       esac
       if [ -n "$TIMEZONE" ]; then
-        timedatectl set-timezone "$TIMEZONE" || yellow "Не удалось установить TIMEZONE=$TIMEZONE"
+        if timedatectl set-timezone "$TIMEZONE"; then
+          green "Часовой пояс установлен: $(timedatectl show --property=Timezone --value 2>/dev/null || echo "$TIMEZONE")"
+        else
+          yellow "Не удалось установить TIMEZONE=$TIMEZONE"
+        fi
       fi
     fi
   fi
@@ -878,9 +892,18 @@ if $INSTALL_XANMOD; then
       desired_variants+=(x64v2)
     fi
     desired_variants+=(x64v1)
+    # Полный список кандидатов в порядке приоритета на основе матрицы XanMod
     candidates=()
-    for v in "${desired_variants[@]}"; do candidates+=("linux-xanmod-$v"); done
-    candidates+=(linux-xanmod)
+    for v in "${desired_variants[@]}"; do
+      candidates+=(
+        "linux-xanmod-${v}"
+        "linux-xanmod-edge-${v}"
+        "linux-xanmod-lts-${v}"
+        "linux-xanmod-rt-${v}"
+      )
+    done
+    # generic fallbacks
+    candidates+=(linux-xanmod linux-xanmod-edge linux-xanmod-lts linux-xanmod-rt)
 
     chosen=""
     for pkg in "${candidates[@]}"; do
@@ -889,7 +912,8 @@ if $INSTALL_XANMOD; then
     done
 
     if [ -z "$chosen" ]; then
-      yellow "Пакеты XanMod недоступны для ${DEBIAN_VERSION_HUMAN}. Пропуск установки XanMod."
+      lvl="$(psabi_level)"
+      yellow "XanMod пакеты не найдены для ${DEBIAN_VERSION_HUMAN} (CPU x86-64-${lvl}). Пробовали: ${candidates[*]}. Пропуск установки XanMod."
     else
       if DEBIAN_FRONTEND=noninteractive apt-get install -y "$chosen"; then
         green "✓ Установлено ядро $chosen"
