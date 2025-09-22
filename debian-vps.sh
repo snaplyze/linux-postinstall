@@ -1063,7 +1063,13 @@ if [ "$SETUP_TIMEZONE" = true ]; then
     if [ "$NONINTERACTIVE" = "true" ]; then
         TZ_TO_SET="$TIMEZONE"
         if [ -z "$TZ_TO_SET" ]; then
-            TZ_TO_SET="$(timedatectl show --property=Timezone --value 2>/dev/null || echo UTC)"
+            print_color "yellow" "Переменная TIMEZONE не задана; оставляем текущий: $(timedatectl show --property=Timezone --value 2>/dev/null || echo UTC)"
+        else
+            if timedatectl set-timezone "$TZ_TO_SET"; then
+                print_color "green" "Часовой пояс установлен: $(timedatectl show --property=Timezone --value 2>/dev/null || echo "$TZ_TO_SET")"
+            else
+                print_color "yellow" "Не удалось установить TIMEZONE=$TZ_TO_SET"
+            fi
         fi
     else
         echo "Доступные часовые пояса:"
@@ -1091,12 +1097,15 @@ if [ "$SETUP_TIMEZONE" = true ]; then
             10)
                 read -r -p "Введите часовой пояс (например, Europe/Paris): " TZ_TO_SET
                 ;;
-            *) TZ_TO_SET="UTC" ;;
+            *) TZ_TO_SET="$(timedatectl show --property=Timezone --value 2>/dev/null || echo UTC)" ;;
         esac
-    fi
-    if [ -n "$TZ_TO_SET" ]; then
-        timedatectl set-timezone "$TZ_TO_SET"
-        echo "Установлен часовой пояс: $TZ_TO_SET"
+        if [ -n "$TZ_TO_SET" ]; then
+            if timedatectl set-timezone "$TZ_TO_SET"; then
+                print_color "green" "Часовой пояс установлен: $(timedatectl show --property=Timezone --value 2>/dev/null || echo "$TZ_TO_SET")"
+            else
+                print_color "yellow" "Не удалось установить TIMEZONE=$TZ_TO_SET"
+            fi
+        fi
     fi
 fi
 
