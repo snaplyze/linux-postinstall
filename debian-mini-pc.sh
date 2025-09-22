@@ -42,15 +42,20 @@ green() { printf "\033[0;32m%s\033[0m\n" "$*"; }
 yellow(){ printf "\033[0;33m%s\033[0m\n" "$*"; }
 red()   { printf "\033[0;31m%s\033[0m\n" "$*"; }
 step()  { echo; printf "\033[1;32m>>> %s\033[0m\n" "$*"; }
-# Определение уровня x86-64 (приблизительно по флагам CPU)
+# Определение уровня x86-64 по флагам CPU (приближено к официальному скрипту)
+cpu_has() { grep -qw "$1" /proc/cpuinfo 2>/dev/null; }
 psabi_level() {
-  if grep -qE '\bavx2\b|\bavx512' /proc/cpuinfo 2>/dev/null; then
-    echo v3
-  elif grep -q '\bavx\b' /proc/cpuinfo 2>/dev/null; then
-    echo v2
-  else
-    echo v1
+  if cpu_has avx2 && cpu_has avx && cpu_has bmi1 && cpu_has bmi2 && \
+     cpu_has f16c && cpu_has fma && cpu_has movbe && \
+     cpu_has sse4_1 && cpu_has sse4_2 && cpu_has ssse3 && \
+     cpu_has popcnt && cpu_has cx16 && cpu_has lahf_lm; then
+    echo v3; return
   fi
+  if cpu_has sse3 && cpu_has sse4_1 && cpu_has sse4_2 && cpu_has ssse3 && \
+     cpu_has popcnt && cpu_has cx16 && cpu_has lahf_lm; then
+    echo v2; return
+  fi
+  echo v1
 }
 # Безопасная смена пароля (скрытый ввод, с подтверждением)
 set_user_password_interactive() {
@@ -885,13 +890,11 @@ if $INSTALL_XANMOD; then
 
     # Сформируем желаемые и доступные варианты пакетов
     desired_variants=()
-    if grep -q 'avx2' /proc/cpuinfo || grep -q 'avx512' /proc/cpuinfo; then
-      desired_variants+=(x64v3)
-    fi
-    if grep -q 'avx' /proc/cpuinfo; then
-      desired_variants+=(x64v2)
-    fi
-    desired_variants+=(x64v1)
+    case "$(psabi_level)" in
+      v3) desired_variants=(x64v3 x64v2 x64v1) ;;
+      v2) desired_variants=(x64v2 x64v1) ;;
+      *)  desired_variants=(x64v1) ;;
+    esac
     # Полный список кандидатов в порядке приоритета на основе матрицы XanMod
     candidates=()
     for v in "${desired_variants[@]}"; do
