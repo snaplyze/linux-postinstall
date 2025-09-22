@@ -71,6 +71,24 @@ step() {
     echo -e "\n\033[1;32m>>> $1\033[0m"
 }
 
+# Определение уровня x86-64 (как в официальном check_x86-64_psabi.sh)
+psabi_level() {
+    awk '
+      BEGIN {
+        level = 0
+        while ((getline < "/proc/cpuinfo") > 0) {
+          if ($0 ~ /flags/) { flags = $0; break }
+        }
+        if (flags ~ /lm/ && flags ~ /cmov/ && flags ~ /cx8/ && flags ~ /fpu/ && flags ~ /fxsr/ && flags ~ /mmx/ && flags ~ /syscall/ && flags ~ /sse2/) level = 1
+        if (level == 1 && flags ~ /cx16/ && flags ~ /lahf/ && flags ~ /popcnt/ && flags ~ /sse4_1/ && flags ~ /sse4_2/ && flags ~ /ssse3/) level = 2
+        if (level == 2 && flags ~ /avx/ && flags ~ /avx2/ && flags ~ /bmi1/ && flags ~ /bmi2/ && flags ~ /f16c/ && flags ~ /fma/ && flags ~ /abm/ && flags ~ /movbe/ && flags ~ /xsave/) level = 3
+        if (level == 3 && flags ~ /avx512f/ && flags ~ /avx512bw/ && flags ~ /avx512cd/ && flags ~ /avx512dq/ && flags ~ /avx512vl/) level = 4
+        if (level > 0) { printf("v%d\n", level); exit 0 }
+        print "v1"; exit 0
+      }
+    '
+}
+
 # Функция для проверки, установлен ли пакет
 is_installed() {
     dpkg -l | grep -q "^ii  $1"
@@ -948,74 +966,55 @@ if [ "$INSTALL_XANMOD" = true ]; then
     mkdir -p /etc/apt/keyrings
     
     # Загружаем и импортируем ключ XanMod
-    wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor -vo /etc/apt/keyrings/xanmod-archive-keyring.gpg
+    wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor -o /etc/apt/keyrings/xanmod-archive-keyring.gpg
     
-    # Добавляем репозиторий XanMod
-    echo 'deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' | tee /etc/apt/sources.list.d/xanmod-release.list
+    # Добавляем репозиторий XanMod по коду релиза Debian (как в официальной инструкции)
+    echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org ${DEBIAN_CODENAME} main" | tee /etc/apt/sources.list.d/xanmod-release.list >/dev/null
     
     # Обновляем информацию о репозиториях
     apt update
     
-    # Определяем наиболее оптимальную версию ядра для процессора
-    echo "Определение оптимальной версии ядра XanMod для вашего процессора..."
-    
-    if grep -q 'avx512' /proc/cpuinfo; then
-        # Для процессоров с поддержкой AVX512 (новейшие процессоры Intel/AMD)
-        # ВАЖНО: Пакета linux-xanmod-x64v4 не существует, для AVX-512 используем x64v3
-        kernel_variant="x64v3"
-        kernel_description="XanMod x64v3 (AVX-512) - для новейших процессоров с поддержкой AVX512 (Intel Icelake/AMD Zen3 и новее)"
-    elif grep -q 'avx2' /proc/cpuinfo; then
-        # Для процессоров с поддержкой AVX2 (большинство современных процессоров)
-        kernel_variant="x64v3"
-        kernel_description="XanMod x64v3 - для современных процессоров с поддержкой AVX2 (Intel Haswell/AMD Excavator и новее)"
-    elif grep -q 'avx' /proc/cpuinfo; then
-        # Для процессоров с поддержкой AVX (Intel Sandy Bridge и новее)
-        kernel_variant="x64v2"
-        kernel_description="XanMod x64v2 - для процессоров с поддержкой AVX (Intel Sandy Bridge/AMD Bulldozer и новее)"
+    # Формируем и выводим список кандидатов на основе psABI и матрицы XanMod
+    lvl=$(psabi_level)
+    desired_variants=()
+    case "$lvl" in
+      v3) desired_variants=(x64v3 x64v2 x64v1) ;;
+      v2) desired_variants=(x64v2 x64v1) ;;
+      *)  desired_variants=(x64v1) ;;
+    esac
+    candidates=()
+    for v in "${desired_variants[@]}"; do
+      candidates+=(
+        "linux-xanmod-${v}"
+        "linux-xanmod-edge-${v}"
+        "linux-xanmod-lts-${v}"
+        "linux-xanmod-rt-${v}"
+      )
+    done
+    candidates+=(linux-xanmod linux-xanmod-edge linux-xanmod-lts linux-xanmod-rt)
+
+    print_color "yellow" "→ CPU psABI: ${lvl}"
+    print_color "yellow" "→ Кандидаты: ${candidates[*]}"
+
+    chosen=""
+    for pkg in "${candidates[@]}"; do
+        cand=$(LC_ALL=C apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/ {print $2}') || true
+        if [ -n "$cand" ] && [ "$cand" != "(none)" ]; then chosen="$pkg"; break; fi
+    done
+
+    if [ -z "$chosen" ]; then
+        print_color "yellow" "XanMod пакеты недоступны для ${DEBIAN_VERSION_HUMAN} (CPU ${lvl}). Пропуск установки."
     else
-        # Для старых процессоров
-        kernel_variant="x64v1"
-        kernel_description="XanMod x64v1 - базовая версия для любых 64-битных процессоров"
-    fi
-    
-    print_color "green" "╔═════════════════════════════════════════════════════════════╗"
-    print_color "green" "║             ИНФОРМАЦИЯ О ВЫБРАННОМ ЯДРЕ                     ║"
-    print_color "green" "╚═════════════════════════════════════════════════════════════╝"
-    print_color "yellow" "→ Выбрана версия: $kernel_description"
-    print_color "yellow" "→ Пакет: linux-xanmod-$kernel_variant"
-    print_color "yellow" "→ Особенности: улучшенная производительность, низкие задержки, оптимизации для серверов"
-    echo
-    
-    # Устанавливаем ядро XanMod
-    print_color "blue" "Установка ядра linux-xanmod-$kernel_variant..."
-    apt install -y linux-xanmod-$kernel_variant
-    
-    # Проверка успешности установки
-    if [ $? -eq 0 ]; then
-        print_color "green" "✓ Ядро XanMod успешно установлено"
-        # Получаем информацию о установленной версии
-        xanmod_version=$(dpkg-query -W -f='${Version}' linux-xanmod-$kernel_variant 2>/dev/null)
-        xanmod_installed_version="$xanmod_version"
-        print_color "green" "✓ Установленная версия: $xanmod_version"
-        print_color "yellow" "⚠ Для применения нового ядра потребуется перезагрузка системы"
-        xanmod_installed=true
-    else
-        print_color "red" "✗ Ошибка при установке ядра XanMod"
-        print_color "yellow" "⚠ Пробуем установить стандартную версию ядра XanMod"
-        
-        # Пробуем установить стандартную версию
-        apt install -y linux-xanmod
-        
-        if [ $? -eq 0 ]; then
-            print_color "green" "✓ Стандартное ядро XanMod успешно установлено"
-            xanmod_version=$(dpkg-query -W -f='${Version}' linux-xanmod 2>/dev/null)
-            kernel_variant="standard"
+        print_color "blue" "Установка ядра $chosen..."
+        if apt install -y "$chosen"; then
+            xanmod_version=$(dpkg-query -W -f='${Version}' "$chosen" 2>/dev/null)
             xanmod_installed_version="$xanmod_version"
-            print_color "green" "✓ Установленная версия: $xanmod_version"
+            print_color "green" "✓ Установлено ядро $chosen"
+            print_color "green" "✓ Версия: $xanmod_version"
             print_color "yellow" "⚠ Для применения нового ядра потребуется перезагрузка системы"
             xanmod_installed=true
         else
-            print_color "red" "✗ Не удалось установить ядро XanMod. Продолжаем настройку с текущим ядром."
+            print_color "red" "✗ Не удалось установить $chosen. Продолжаем с текущим ядром."
         fi
     fi
     
