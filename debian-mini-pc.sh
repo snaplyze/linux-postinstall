@@ -783,9 +783,11 @@ fi
 if $INSTALL_MONITORING; then
   step "Установка инструментов мониторинга"
   ensure_pkg sysstat smartmontools lm-sensors nmon iperf3
-  systemctl enable --now sysstat || true
-  # smartd unit имя может отличаться; пробуем оба варианта
-  systemctl enable --now smartd 2>/dev/null || systemctl enable --now smartmontools 2>/dev/null || true
+  # Тихо включаем таймеры/сервисы (подавляем лишний вывод systemd-sysv-install)
+  systemctl enable --now sysstat >/dev/null 2>&1 || true
+  # smartd unit имя может отличаться; пробуем оба варианта и не шумим
+  systemctl enable --now smartd >/dev/null 2>&1 || \
+  systemctl enable --now smartmontools >/dev/null 2>&1 || true
   # Базовая конфигурация smartd (проверка ежедневно)
   if [ -f /etc/smartd.conf ]; then
     # Аккуратно заменим/добавим строку DEVICESCAN с расписанием на 02:00 ежедневно и уведомлением root
@@ -794,7 +796,7 @@ if $INSTALL_MONITORING; then
     else
       printf '\nDEVICESCAN -a -o on -S on -s (S/../.././02) -m root\n' >> /etc/smartd.conf
     fi
-    systemctl restart smartd 2>/dev/null || systemctl restart smartmontools 2>/dev/null || true
+    systemctl restart smartd >/dev/null 2>&1 || systemctl restart smartmontools >/dev/null 2>&1 || true
   fi
   sensors-detect --auto || true
 fi
@@ -934,9 +936,7 @@ USER_CONFIG_EOF
     sed -i "s|__FISH_LOCALE__|$fish_locale|g" /tmp/user_config.fish
     cat > /tmp/user_greeting.fish <<'USER_GREETING_EOF'
 function fish_greeting
-  set_color green
-  echo "Welcome to fish — happy hacking!"
-  set_color normal
+    echo "🐧 Debian - "(date '+%Y-%m-%d %H:%M')""
 end
 USER_GREETING_EOF
     cp /tmp/user_config.fish "$home_dir/.config/fish/config.fish"
@@ -1000,9 +1000,7 @@ ROOT_CONFIG_EOF
   sed -i "s|__FISH_LOCALE__|$fish_locale|g" /root/.config/fish/config.fish
   cat > /root/.config/fish/functions/fish_greeting.fish <<'ROOT_GREETING_EOF'
 function fish_greeting
-  set_color cyan
-  echo "Root fish ready. Stay safe."
-  set_color normal
+    echo "🐧 Debian - "(date '+%Y-%m-%d %H:%M')""
 end
 ROOT_GREETING_EOF
   # Docker completions (root)
