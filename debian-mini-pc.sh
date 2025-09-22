@@ -912,7 +912,7 @@ if $INSTALL_XANMOD; then
 
     chosen=""
     for pkg in "${candidates[@]}"; do
-      cand=$(apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/ {print $2}') || true
+      cand=$(LC_ALL=C apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/ {print $2}') || true
       if [ -n "$cand" ] && [ "$cand" != "(none)" ]; then chosen="$pkg"; break; fi
     done
 
