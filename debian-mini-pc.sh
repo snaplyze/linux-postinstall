@@ -511,7 +511,36 @@ if $SETUP_TIMEZONE; then
   if [ -n "$TIMEZONE" ]; then
     timedatectl set-timezone "$TIMEZONE"
   else
-    echo "Переменная TIMEZONE не задана; оставляем текущий: $(timedatectl show --property=Timezone --value || true)"
+    if $NONINTERACTIVE; then
+      echo "Переменная TIMEZONE не задана; оставляем текущий: $(timedatectl show --property=Timezone --value || true)"
+    else
+      echo "Выберите часовой пояс:"
+      echo " 1) Europe/Moscow"
+      echo " 2) Europe/Berlin"
+      echo " 3) Europe/London"
+      echo " 4) America/New_York"
+      echo " 5) America/Los_Angeles"
+      echo " 6) Asia/Tokyo"
+      echo " 7) Asia/Shanghai"
+      echo " 8) Australia/Sydney"
+      echo " 9) Ввести свой"
+      read -r -p "Ваш выбор [1-9]: " tz_choice
+      case "$tz_choice" in
+        1) TIMEZONE="Europe/Moscow" ;;
+        2) TIMEZONE="Europe/Berlin" ;;
+        3) TIMEZONE="Europe/London" ;;
+        4) TIMEZONE="America/New_York" ;;
+        5) TIMEZONE="America/Los_Angeles" ;;
+        6) TIMEZONE="Asia/Tokyo" ;;
+        7) TIMEZONE="Asia/Shanghai" ;;
+        8) TIMEZONE="Australia/Sydney" ;;
+        9) read -r -p "Введите TZ (например, Europe/Paris): " TIMEZONE ;;
+        *) TIMEZONE="$(timedatectl show --property=Timezone --value 2>/dev/null || echo UTC)" ;;
+      esac
+      if [ -n "$TIMEZONE" ]; then
+        timedatectl set-timezone "$TIMEZONE" || yellow "Не удалось установить TIMEZONE=$TIMEZONE"
+      fi
+    fi
   fi
 fi
 
@@ -836,37 +865,39 @@ if $INSTALL_XANMOD; then
   else
     mkdir -p /etc/apt/keyrings
     ensure_pkg wget gnupg
-    wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor -o /etc/apt/keyrings/xanmod-archive-keyring.gpg
+    wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor | tee /etc/apt/keyrings/xanmod-archive-keyring.gpg >/dev/null
     echo 'deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' > /etc/apt/sources.list.d/xanmod-release.list
     apt-get update -y
 
-    # Выбор варианта по возможностям CPU
-    if grep -q 'avx512' /proc/cpuinfo; then
-      kernel_variant="x64v3"  # x64v4 не существует в репо
-    elif grep -q 'avx2' /proc/cpuinfo; then
-      kernel_variant="x64v3"
-    elif grep -q 'avx' /proc/cpuinfo; then
-      kernel_variant="x64v2"
-    else
-      kernel_variant="x64v1"
+    # Сформируем желаемые и доступные варианты пакетов
+    desired_variants=()
+    if grep -q 'avx2' /proc/cpuinfo || grep -q 'avx512' /proc/cpuinfo; then
+      desired_variants+=(x64v3)
     fi
+    if grep -q 'avx' /proc/cpuinfo; then
+      desired_variants+=(x64v2)
+    fi
+    desired_variants+=(x64v1)
+    candidates=()
+    for v in "${desired_variants[@]}"; do candidates+=("linux-xanmod-$v"); done
+    candidates+=(linux-xanmod)
 
-    # Проверим доступность пакета до установки
-    if ! apt-cache policy linux-xanmod-$kernel_variant 2>/dev/null | awk '/Candidate:/ {print $2}' | grep -vq '(none)'; then
-      yellow "Пакет linux-xanmod-$kernel_variant недоступен для ${DEBIAN_VERSION_HUMAN}. Пропуск установки XanMod."
-    elif DEBIAN_FRONTEND=noninteractive apt-get install -y linux-xanmod-$kernel_variant; then
-      green "✓ Установлено ядро linux-xanmod-$kernel_variant"
-      xanmod_installed=true
-      xanmod_installed_version=$(dpkg-query -W -f='${Version}' linux-xanmod-$kernel_variant 2>/dev/null || true)
+    chosen=""
+    for pkg in "${candidates[@]}"; do
+      cand=$(apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/ {print $2}') || true
+      if [ -n "$cand" ] && [ "$cand" != "(none)" ]; then chosen="$pkg"; break; fi
+    done
+
+    if [ -z "$chosen" ]; then
+      yellow "Пакеты XanMod недоступны для ${DEBIAN_VERSION_HUMAN}. Пропуск установки XanMod."
     else
-      red "Не удалось установить linux-xanmod-$kernel_variant. Пробуем стандартное linux-xanmod"
-      if apt-cache policy linux-xanmod 2>/dev/null | awk '/Candidate:/ {print $2}' | grep -vq '(none)' && \
-         DEBIAN_FRONTEND=noninteractive apt-get install -y linux-xanmod; then
-        green "✓ Установлено ядро linux-xanmod"
+      if DEBIAN_FRONTEND=noninteractive apt-get install -y "$chosen"; then
+        green "✓ Установлено ядро $chosen"
         xanmod_installed=true
-        xanmod_installed_version=$(dpkg-query -W -f='${Version}' linux-xanmod 2>/dev/null || true)
+        xanmod_installed_version=$(dpkg-query -W -f='${Version}' "$chosen" 2>/dev/null || true)
+        kernel_variant="${chosen#linux-xanmod-}"
       else
-        red "✗ Не удалось установить XanMod. Продолжаем с текущим ядром."
+        red "✗ Не удалось установить $chosen. Продолжаем с текущим ядром."
       fi
     fi
   fi
