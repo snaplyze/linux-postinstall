@@ -880,7 +880,7 @@ if $INSTALL_XANMOD; then
     mkdir -p /etc/apt/keyrings
     ensure_pkg wget gnupg
     wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor | tee /etc/apt/keyrings/xanmod-archive-keyring.gpg >/dev/null
-    echo 'deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' > /etc/apt/sources.list.d/xanmod-release.list
+    echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org ${DEBIAN_CODENAME} main" > /etc/apt/sources.list.d/xanmod-release.list
     apt-get update -y
 
     # Сформируем желаемые и доступные варианты пакетов
