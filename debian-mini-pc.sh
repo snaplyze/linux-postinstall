@@ -42,20 +42,22 @@ green() { printf "\033[0;32m%s\033[0m\n" "$*"; }
 yellow(){ printf "\033[0;33m%s\033[0m\n" "$*"; }
 red()   { printf "\033[0;31m%s\033[0m\n" "$*"; }
 step()  { echo; printf "\033[1;32m>>> %s\033[0m\n" "$*"; }
-# Определение уровня x86-64 по флагам CPU (приближено к официальному скрипту)
-cpu_has() { grep -qw "$1" /proc/cpuinfo 2>/dev/null; }
+# Определение уровня x86-64 (точно по логике официального скрипта check_x86-64_psabi.sh)
 psabi_level() {
-  if cpu_has avx2 && cpu_has avx && cpu_has bmi1 && cpu_has bmi2 && \
-     cpu_has f16c && cpu_has fma && cpu_has movbe && \
-     cpu_has sse4_1 && cpu_has sse4_2 && cpu_has ssse3 && \
-     cpu_has popcnt && cpu_has cx16 && cpu_has lahf_lm; then
-    echo v3; return
-  fi
-  if cpu_has sse3 && cpu_has sse4_1 && cpu_has sse4_2 && cpu_has ssse3 && \
-     cpu_has popcnt && cpu_has cx16 && cpu_has lahf_lm; then
-    echo v2; return
-  fi
-  echo v1
+  awk '
+    BEGIN {
+      level = 0
+      while ((getline < "/proc/cpuinfo") > 0) {
+        if ($0 ~ /flags/) { flags = $0; break }
+      }
+      if (flags ~ /lm/ && flags ~ /cmov/ && flags ~ /cx8/ && flags ~ /fpu/ && flags ~ /fxsr/ && flags ~ /mmx/ && flags ~ /syscall/ && flags ~ /sse2/) level = 1
+      if (level == 1 && flags ~ /cx16/ && flags ~ /lahf/ && flags ~ /popcnt/ && flags ~ /sse4_1/ && flags ~ /sse4_2/ && flags ~ /ssse3/) level = 2
+      if (level == 2 && flags ~ /avx/ && flags ~ /avx2/ && flags ~ /bmi1/ && flags ~ /bmi2/ && flags ~ /f16c/ && flags ~ /fma/ && flags ~ /abm/ && flags ~ /movbe/ && flags ~ /xsave/) level = 3
+      if (level == 3 && flags ~ /avx512f/ && flags ~ /avx512bw/ && flags ~ /avx512cd/ && flags ~ /avx512dq/ && flags ~ /avx512vl/) level = 4
+      if (level > 0) { printf("v%d\n", level); exit 0 }
+      print "v1"; exit 0
+    }
+  '
 }
 # Безопасная смена пароля (скрытый ввод, с подтверждением)
 set_user_password_interactive() {
