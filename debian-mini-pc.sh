@@ -1114,6 +1114,21 @@ FISHER_ROOT_SCRIPT_EOF
   chsh -s /usr/bin/fish root || true
 fi
 
+## Очистка временных файлов (если обновляли систему)
+if $UPDATE_SYSTEM; then
+  step "Очистка временных файлов"
+  apt clean || true
+  journalctl --vacuum-time=1d || true
+fi
+
+# Финальная очистка системы и APT-кэша
+step "Финальная очистка системы"
+apt-get -y autoremove --purge || true
+apt-get -y autoclean || true
+apt-get -y clean || true
+# Очистка списков APT (при следующем использовании APT потребуется apt update)
+rm -rf /var/lib/apt/lists/* || true
+
 ## Итог
 echo
 green "Готово. ${DEBIAN_VERSION_HUMAN} настроен для мини-ПК (домашний сервер)."
