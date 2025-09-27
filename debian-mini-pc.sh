@@ -864,6 +864,22 @@ if $INSTALL_DOCKER; then
   apt-get update -y
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   systemctl enable --now docker
+
+  # Добавляем пользователей в группу docker для доступа к сокету без sudo
+  if ! getent group docker >/dev/null; then
+    groupadd docker
+  fi
+  # Добавляем пользователя, выполнившего скрипт через sudo
+  if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    usermod -aG docker "$SUDO_USER" || true
+    echo "Пользователь $SUDO_USER добавлен в группу docker."
+  fi
+  # Добавляем нового пользователя, если он был создан ранее
+  if $CREATE_USER && [ -n "${NEW_USERNAME:-}" ] && id "${NEW_USERNAME}" >/dev/null 2>&1; then
+    usermod -aG docker "$NEW_USERNAME" || true
+    echo "Пользователь $NEW_USERNAME добавлен в группу docker."
+  fi
+  echo "Чтобы изменения вступили в силу, выйдите и войдите снова или выполните: newgrp docker"
 fi
 
 if $SETUP_FIREWALL; then

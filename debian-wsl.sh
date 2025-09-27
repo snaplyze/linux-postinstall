@@ -565,6 +565,22 @@ if $DO_INSTALL_DOCKER; then
     warn "systemd в этой сессии не активен. Пропускаем enable/start сервисов."
     warn "Для WSL рекомендуется Docker Desktop (WSL integration)."
   fi
+
+  # Добавляем пользователя в группу docker для доступа к сокету без sudo
+  if ! getent group docker >/dev/null 2>&1; then
+    sudo_or_su groupadd docker || true
+  fi
+  # Предпочитаем DEFAULT_USER, если он определён и не root
+  if [ -n "${DEFAULT_USER:-}" ] && [ "${DEFAULT_USER}" != "root" ] && id "${DEFAULT_USER}" >/dev/null 2>&1; then
+    sudo_or_su usermod -aG docker "$DEFAULT_USER" || true
+    ok "Пользователь $DEFAULT_USER добавлен в группу docker."
+  fi
+  # Если был создан новый пользователь в этом сеансе — тоже добавим
+  if $DO_CREATE_USER && [ -n "${NEW_USERNAME:-}" ] && id "${NEW_USERNAME}" >/dev/null 2>&1; then
+    sudo_or_su usermod -aG docker "$NEW_USERNAME" || true
+    ok "Пользователь $NEW_USERNAME добавлен в группу docker."
+  fi
+  info "Чтобы изменения вступили в силу, выйдите и войдите снова или выполните: newgrp docker"
 else
   info "Пропускаем установку Docker (не выбрано)."
 fi
