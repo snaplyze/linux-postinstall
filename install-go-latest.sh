@@ -57,6 +57,20 @@ sanitize_version() {
   printf '%s' "$raw" | tr -d '[:space:]'
 }
 
+download_with_fallback() {
+  # Usage: download_with_fallback <output> <label> <primary_url> [fallback_url]
+  local output="$1" label="$2" primary="$3" fallback="${4:-}"
+  if curl -fsSL -o "$output" "$primary"; then
+    return 0
+  fi
+  if [ -n "$fallback" ]; then
+    warn "Failed to download ${label} from ${primary}. Trying mirror..."
+    curl -fsSL -o "$output" "$fallback" || die "Failed to download ${label} from mirror ${fallback}"
+  else
+    die "Failed to download ${label} from ${primary}"
+  fi
+}
+
 usage() {
   cat <<EOF
 install-go-latest.sh — install the latest stable Go on Debian 13
@@ -158,11 +172,14 @@ fi
 [ -n "$REQUESTED_VERSION" ] || die "Could not determine version. Use --version X.Y.Z."
 
 TARBALL="go${REQUESTED_VERSION}.${OS}-${ARCH}.tar.gz"
-BASE_URL="https://go.dev/dl"
-URL="${BASE_URL}/${TARBALL}"
+PRIMARY_BASE="https://go.dev/dl"
+MIRROR_BASE="https://dl.google.com/go"
+URL="${PRIMARY_BASE}/${TARBALL}"
 SUM_URL="${URL}.sha256"
 DOWNLOAD_URL="${URL}?download=1"
 CHECKSUM_URL="${SUM_URL}?download=1"
+MIRROR_URL="${MIRROR_BASE}/${TARBALL}"
+MIRROR_SUM_URL="${MIRROR_BASE}/${TARBALL}.sha256"
 
 log "Installing Go ${REQUESTED_VERSION} for ${OS}-${ARCH} into ${INSTALL_DIR}"
 log "Download URL: ${URL}"
@@ -173,15 +190,29 @@ cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 
 cd "$WORKDIR"
-curl -fsSLo "$TARBALL" "$DOWNLOAD_URL"
+download_with_fallback "$TARBALL" "Go archive" "$DOWNLOAD_URL" "$MIRROR_URL"
 
 if [ "$VERIFY" -eq 1 ]; then
   log "Downloading checksum and verifying..."
-  curl -fsSLo "${TARBALL}.sha256" "$CHECKSUM_URL"
+  CHECKSUM_FILE="${TARBALL}.sha256"
+  CHECKSUM_SOURCE="$CHECKSUM_URL"
+  if ! curl -fsSL -o "$CHECKSUM_FILE" "$CHECKSUM_URL"; then
+    warn "Failed to download checksum from ${CHECKSUM_URL}. Trying mirror..."
+    curl -fsSL -o "$CHECKSUM_FILE" "$MIRROR_SUM_URL" || die "Failed to download checksum for ${TARBALL}."
+    CHECKSUM_SOURCE="$MIRROR_SUM_URL"
+  fi
   # File format: "<sha256>  <filename>"
-  EXPECTED="$(awk '{print $1}' "${TARBALL}.sha256")"
+  EXPECTED="$(awk '{print $1}' "$CHECKSUM_FILE")"
   if ! printf '%s' "$EXPECTED" | grep -Eq '^[0-9a-f]{64}$'; then
-    die "Checksum download for ${TARBALL} looked invalid (got: ${EXPECTED}). Try rerunning with --no-verify or check network access."
+    if [ "$CHECKSUM_SOURCE" = "$CHECKSUM_URL" ]; then
+      warn "Checksum from ${CHECKSUM_URL} looked invalid. Retrying via mirror..."
+      curl -fsSL -o "$CHECKSUM_FILE" "$MIRROR_SUM_URL" || die "Failed to download checksum for ${TARBALL}."
+      CHECKSUM_SOURCE="$MIRROR_SUM_URL"
+      EXPECTED="$(awk '{print $1}' "$CHECKSUM_FILE")"
+    fi
+  fi
+  if ! printf '%s' "$EXPECTED" | grep -Eq '^[0-9a-f]{64}$'; then
+    die "Checksum download for ${TARBALL} looked invalid (source: ${CHECKSUM_SOURCE}). Try rerunning with --no-verify or check network access."
   fi
   ACTUAL="$(sha256sum "$TARBALL" | awk '{print $1}')"
   if [ "$EXPECTED" != "$ACTUAL" ]; then
