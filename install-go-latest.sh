@@ -50,6 +50,13 @@ sudo_if_needed() {
   fi
 }
 
+sanitize_version() {
+  # Strip optional "go" prefix and whitespace/newlines from version strings
+  local raw="$1"
+  raw="${raw#go}"
+  printf '%s' "$raw" | tr -d '[:space:]'
+}
+
 usage() {
   cat <<EOF
 install-go-latest.sh — install the latest stable Go on Debian 13
@@ -90,6 +97,10 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+if [ -n "$REQUESTED_VERSION" ]; then
+  REQUESTED_VERSION="$(sanitize_version "$REQUESTED_VERSION")"
+fi
 
 need_bin curl
 need_bin tar
@@ -135,8 +146,9 @@ fi
 if [ -z "$REQUESTED_VERSION" ]; then
   log "Detecting latest stable Go version from go.dev..."
   if LATEST=$(curl -fsSL "https://go.dev/VERSION?m=text"); then
-    # Expected like: go1.23.2
-    REQUESTED_VERSION="${LATEST#go}"
+    # API returns one version per line; only care about the first stable entry
+    LATEST="${LATEST%%$'\n'*}"
+    REQUESTED_VERSION="$(sanitize_version "$LATEST")"
     [ -n "$REQUESTED_VERSION" ] || [ "$FORCE" -eq 1 ] || die "Failed to parse latest version string: '$LATEST'"
   else
     [ "$FORCE" -eq 1 ] || die "Failed to get latest version from go.dev. Use --force to continue."
@@ -227,4 +239,3 @@ else
     warn "Go binary not found at expected path: $GO_BIN"
   fi
 fi
-
