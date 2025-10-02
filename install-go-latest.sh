@@ -161,6 +161,8 @@ TARBALL="go${REQUESTED_VERSION}.${OS}-${ARCH}.tar.gz"
 BASE_URL="https://go.dev/dl"
 URL="${BASE_URL}/${TARBALL}"
 SUM_URL="${URL}.sha256"
+DOWNLOAD_URL="${URL}?download=1"
+CHECKSUM_URL="${SUM_URL}?download=1"
 
 log "Installing Go ${REQUESTED_VERSION} for ${OS}-${ARCH} into ${INSTALL_DIR}"
 log "Download URL: ${URL}"
@@ -171,13 +173,16 @@ cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 
 cd "$WORKDIR"
-curl -fSLO "$URL"
+curl -fsSLo "$TARBALL" "$DOWNLOAD_URL"
 
 if [ "$VERIFY" -eq 1 ]; then
   log "Downloading checksum and verifying..."
-  curl -fSLO "$SUM_URL"
+  curl -fsSLo "${TARBALL}.sha256" "$CHECKSUM_URL"
   # File format: "<sha256>  <filename>"
   EXPECTED="$(awk '{print $1}' "${TARBALL}.sha256")"
+  if ! printf '%s' "$EXPECTED" | grep -Eq '^[0-9a-f]{64}$'; then
+    die "Checksum download for ${TARBALL} looked invalid (got: ${EXPECTED}). Try rerunning with --no-verify or check network access."
+  fi
   ACTUAL="$(sha256sum "$TARBALL" | awk '{print $1}')"
   if [ "$EXPECTED" != "$ACTUAL" ]; then
     die "Checksum mismatch! expected=$EXPECTED actual=$ACTUAL"
