@@ -71,6 +71,126 @@ download_with_fallback() {
   fi
 }
 
+shell_present() {
+  local shell_name="$1"
+  command -v "$shell_name" >/dev/null 2>&1 && return 0
+  if [ -f /etc/shells ]; then
+    if awk -v shell="$shell_name" 'BEGIN { FS="/" }
+      $0 !~ /^#/ { if ($NF == shell) { exit 0 } }
+      END { exit 1 }' /etc/shells; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+install_system_snippet() {
+  # Usage: install_system_snippet <destination> <content>
+  local target="$1" content="$2" dir
+  dir="$(dirname "$target")"
+  sudo_if_needed mkdir -p "$dir" || return 1
+  if is_root; then
+    printf '%s\n' "$content" > "$target" || return 1
+  else
+    printf '%s\n' "$content" | sudo tee "$target" >/dev/null || return 1
+  fi
+  sudo_if_needed chmod 644 "$target" >/dev/null 2>&1 || true
+  return 0
+}
+
+append_user_snippet() {
+  # Usage: append_user_snippet <file> <marker> <snippet>
+  local file="$1" marker="$2" snippet="$3"
+  local dir
+  dir="$(dirname "$file")"
+  mkdir -p "$dir" || return 2
+  touch "$file" || return 2
+  if grep -Fq "$marker" "$file"; then
+    return 1
+  fi
+  {
+    printf '\n%s\n' "$snippet"
+  } >> "$file" || return 2
+  return 0
+}
+
+ensure_user_posix_profiles() {
+  local marker="# golang env (install-go-latest.sh)" appended=()
+  local snippet="$marker
+export PATH=\"\$PATH:/usr/local/go/bin\"
+export GOPATH=\"\$HOME/go\"
+export PATH=\"\$PATH:\$GOPATH/bin\""
+  local files=("${HOME}/.profile") file
+
+  if shell_present bash; then
+    files+=("${HOME}/.bashrc")
+  fi
+  if shell_present zsh; then
+    files+=("${HOME}/.zshrc")
+  fi
+  if shell_present ksh; then
+    files+=("${HOME}/.kshrc")
+  fi
+
+  for file in "${files[@]}"; do
+    if append_user_snippet "$file" "$marker" "$snippet"; then
+      appended+=("$file")
+    fi
+  done
+
+  if [ ${#appended[@]} -gt 0 ]; then
+    warn "Added Go env to ${appended[*]}. Run: source the updated files or restart the shell."
+  fi
+}
+
+ensure_user_csh_profiles() {
+  local marker="# golang env (install-go-latest.sh)" appended=()
+  local snippet="$marker
+setenv GOPATH \"\$HOME/go\"
+if ( $?PATH ) then
+  setenv PATH \"\$PATH:/usr/local/go/bin:\${GOPATH}/bin\"
+else
+  setenv PATH \"/usr/local/go/bin:\${GOPATH}/bin\"
+endif"
+  local files=() file
+
+  if shell_present csh; then
+    files+=("${HOME}/.cshrc")
+  fi
+  if shell_present tcsh; then
+    files+=("${HOME}/.tcshrc")
+  fi
+
+  for file in "${files[@]}"; do
+    if append_user_snippet "$file" "$marker" "$snippet"; then
+      appended+=("$file")
+    fi
+  done
+
+  if [ ${#appended[@]} -gt 0 ]; then
+    warn "Added Go env to ${appended[*]}. Run: source the updated files or restart the shell."
+  fi
+}
+
+ensure_user_fish_profile() {
+  local conf_dir="${HOME}/.config/fish/conf.d"
+  local file="${conf_dir}/golang.fish"
+  mkdir -p "$conf_dir" || return 1
+  cat <<'EOF' > "$file"
+# golang env (install-go-latest.sh)
+set -gx GOPATH $HOME/go
+set -l go_bin /usr/local/go/bin
+set -l gopath_bin $GOPATH/bin
+if not contains $go_bin $PATH
+  set -gx PATH $go_bin $PATH
+end
+if not contains $gopath_bin $PATH
+  set -gx PATH $PATH $gopath_bin
+end
+EOF
+  return 0
+}
+
 usage() {
   cat <<EOF
 install-go-latest.sh — install the latest stable Go on Debian 13
@@ -232,29 +352,86 @@ sudo_if_needed tar -C "$PREFIX" -xzf "$TARBALL"
 
 # -------- Profile setup --------
 if [ "$SET_PROFILE" -eq 1 ]; then
-  SYS_PROFILE="/etc/profile.d/golang.sh"
-  PROFILE_CONTENT=$(cat <<'EOP'
+  POSIX_PROFILE_CONTENT=$(cat <<'EOP'
 # golang system-wide environment (installed by install-go-latest.sh)
 export PATH="$PATH:/usr/local/go/bin"
 export GOPATH="$HOME/go"
 export PATH="$PATH:$GOPATH/bin"
 EOP
 )
-  if is_root; then
-    printf "%s\n" "$PROFILE_CONTENT" > "$SYS_PROFILE"
-    log "Wrote $SYS_PROFILE"
+  CSH_PROFILE_CONTENT=$(cat <<'EOC'
+# golang system-wide environment (installed by install-go-latest.sh)
+setenv GOPATH "$HOME/go"
+if ( $?PATH ) then
+  setenv PATH "$PATH:/usr/local/go/bin:${GOPATH}/bin"
+else
+  setenv PATH "/usr/local/go/bin:${GOPATH}/bin"
+endif
+EOC
+)
+  FISH_PROFILE_CONTENT=$(cat <<'EOFISH'
+# golang system-wide environment (installed by install-go-latest.sh)
+set -gx GOPATH $HOME/go
+set -l go_bin /usr/local/go/bin
+set -l gopath_bin $GOPATH/bin
+if not contains $go_bin $PATH
+  set -gx PATH $go_bin $PATH
+end
+if not contains $gopath_bin $PATH
+  set -gx PATH $PATH $gopath_bin
+end
+EOFISH
+)
+
+  POSIX_SYSTEM_OK=0
+  CSH_SYSTEM_OK=0
+  FISH_SYSTEM_OK=0
+
+  if install_system_snippet "/etc/profile.d/golang.sh" "$POSIX_PROFILE_CONTENT"; then
+    POSIX_SYSTEM_OK=1
+    log "Wrote /etc/profile.d/golang.sh"
   else
-    if sudo_if_needed sh -c "printf '%s\n' \"$PROFILE_CONTENT\" > '$SYS_PROFILE'"; then
-      log "Wrote $SYS_PROFILE (system-wide)."
+    warn "Could not write /etc/profile.d/golang.sh"
+  fi
+
+  if shell_present csh || shell_present tcsh; then
+    if install_system_snippet "/etc/profile.d/golang.csh" "$CSH_PROFILE_CONTENT"; then
+      CSH_SYSTEM_OK=1
+      log "Wrote /etc/profile.d/golang.csh"
     else
-      warn "Could not write $SYS_PROFILE. Falling back to per-user profile (~/.profile)."
-      # Append lines to ~/.profile if not already present
-      USER_PROFILE="${HOME}/.profile"
-      touch "$USER_PROFILE"
-      grep -q '/usr/local/go/bin' "$USER_PROFILE" || printf '\nexport PATH=$PATH:/usr/local/go/bin\n' >> "$USER_PROFILE"
-      grep -q 'export GOPATH=' "$USER_PROFILE" || printf 'export GOPATH=$HOME/go\n' >> "$USER_PROFILE"
-      grep -q '$GOPATH/bin' "$USER_PROFILE" || printf 'export PATH=$PATH:$GOPATH/bin\n' >> "$USER_PROFILE"
-      warn "Added Go env to $USER_PROFILE. Run: source ~/.profile"
+      warn "Could not write /etc/profile.d/golang.csh"
+    fi
+  else
+    CSH_SYSTEM_OK=1
+  fi
+
+  if shell_present fish; then
+    if install_system_snippet "/etc/fish/conf.d/golang.fish" "$FISH_PROFILE_CONTENT"; then
+      FISH_SYSTEM_OK=1
+      log "Wrote /etc/fish/conf.d/golang.fish"
+    else
+      warn "Could not write /etc/fish/conf.d/golang.fish"
+    fi
+  else
+    FISH_SYSTEM_OK=1
+  fi
+
+  if [ "$POSIX_SYSTEM_OK" -ne 1 ]; then
+    warn "Falling back to user-level profile updates for POSIX-compatible shells."
+    ensure_user_posix_profiles
+  fi
+
+  if [ "$CSH_SYSTEM_OK" -ne 1 ]; then
+    warn "Falling back to user-level profile updates for C-shell derivatives."
+    ensure_user_csh_profiles
+  fi
+
+  if [ "$FISH_SYSTEM_OK" -ne 1 ] && shell_present fish; then
+    warn "Falling back to user-level profile updates for fish shell."
+    if ensure_user_fish_profile; then
+      warn "Added Go env to ${HOME}/.config/fish/conf.d/golang.fish. Run: source ~/.config/fish/conf.d/golang.fish"
+    else
+      warn "Failed to configure fish shell profile. Please add /usr/local/go/bin and $HOME/go/bin to fish PATH manually."
     fi
   fi
 else
