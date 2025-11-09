@@ -273,16 +273,20 @@ info "  Timezone: $(timedatectl show --property=Timezone --value)"
 echo ""
 
 ################################################################################
-# 1.7. Zsh and Oh My Zsh Installation
+# 1.7. Zsh and Starship Installation
 ################################################################################
-log "Step 1.7: Installing and configuring Zsh + Oh My Zsh..."
+log "Step 1.7: Installing and configuring Zsh + Starship..."
 
 echo ""
-info "Installing Zsh and Oh My Zsh for better shell experience..."
+info "Installing Zsh and Starship for better shell experience..."
 echo ""
 
 # Install Zsh and dependencies
-apt-get install -y zsh git curl fonts-powerline
+apt-get install -y zsh git curl
+
+# Install Starship prompt (universal, works everywhere)
+curl -sS https://starship.rs/install.sh | sh -s -- -y
+log "Starship prompt installed"
 
 # Function to setup Zsh for a user
 setup_zsh_for_user() {
@@ -291,234 +295,334 @@ setup_zsh_for_user() {
 
     log "Setting up Zsh for user: $username"
 
-    # Install Oh My Zsh
-    if [ ! -d "$user_home/.oh-my-zsh" ]; then
-        # Download and install Oh My Zsh (non-interactive)
-        su - $username -c 'sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended'
-        log "Oh My Zsh installed for $username"
-    else
-        log "Oh My Zsh already installed for $username"
-    fi
+    # Create plugins directory
+    mkdir -p "$user_home/.zsh"
 
-    # Install Powerlevel10k theme
-    if [ ! -d "$user_home/.oh-my-zsh/custom/themes/powerlevel10k" ]; then
-        su - $username -c "git clone --depth=1 https://github.com/romkatv/powerlevel10k.git $user_home/.oh-my-zsh/custom/themes/powerlevel10k"
-        log "Powerlevel10k theme installed for $username"
-    fi
-
-    # Install useful plugins
-    # zsh-autosuggestions
-    if [ ! -d "$user_home/.oh-my-zsh/custom/plugins/zsh-autosuggestions" ]; then
-        su - $username -c "git clone https://github.com/zsh-users/zsh-autosuggestions $user_home/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+    # Install zsh-autosuggestions
+    if [ ! -d "$user_home/.zsh/zsh-autosuggestions" ]; then
+        git clone https://github.com/zsh-users/zsh-autosuggestions "$user_home/.zsh/zsh-autosuggestions"
         log "zsh-autosuggestions plugin installed for $username"
     fi
 
-    # zsh-syntax-highlighting
-    if [ ! -d "$user_home/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" ]; then
-        su - $username -c "git clone https://github.com/zsh-users/zsh-syntax-highlighting.git $user_home/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+    # Install zsh-syntax-highlighting
+    if [ ! -d "$user_home/.zsh/zsh-syntax-highlighting" ]; then
+        git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$user_home/.zsh/zsh-syntax-highlighting"
         log "zsh-syntax-highlighting plugin installed for $username"
     fi
 
-    # zsh-completions
-    if [ ! -d "$user_home/.oh-my-zsh/custom/plugins/zsh-completions" ]; then
-        su - $username -c "git clone https://github.com/zsh-users/zsh-completions $user_home/.oh-my-zsh/custom/plugins/zsh-completions"
+    # Install zsh-completions
+    if [ ! -d "$user_home/.zsh/zsh-completions" ]; then
+        git clone https://github.com/zsh-users/zsh-completions "$user_home/.zsh/zsh-completions"
         log "zsh-completions plugin installed for $username"
     fi
 
-    # Create custom .zshrc with optimal configuration
+    # Create .zshrc with optimal configuration
     cat > "$user_home/.zshrc" <<'ZSHRC'
-# Path to oh-my-zsh installation
-export ZSH="$HOME/.oh-my-zsh"
-
-# Set Powerlevel10k theme
-ZSH_THEME="powerlevel10k/powerlevel10k"
-
-# Enable Powerlevel10k instant prompt
+# Enable Powerlevel10k instant prompt if exists (for compatibility)
 if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
   source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
 fi
 
-# Plugins
-plugins=(
-    git
-    docker
-    docker-compose
-    kubectl
-    sudo
-    command-not-found
-    colored-man-pages
-    zsh-autosuggestions
-    zsh-syntax-highlighting
-    zsh-completions
-)
+# History configuration
+HISTSIZE=50000
+SAVEHIST=50000
+HISTFILE=~/.zsh_history
+setopt EXTENDED_HISTORY          # Write the history file in the ':start:elapsed;command' format
+setopt INC_APPEND_HISTORY        # Write to the history file immediately, not when the shell exits
+setopt SHARE_HISTORY             # Share history between all sessions
+setopt HIST_IGNORE_DUPS          # Do not record an event that was just recorded again
+setopt HIST_IGNORE_ALL_DUPS      # Delete an old recorded event if a new event is a duplicate
+setopt HIST_IGNORE_SPACE         # Do not record an event starting with a space
+setopt HIST_SAVE_NO_DUPS         # Do not write a duplicate event to the history file
+setopt HIST_VERIFY               # Do not execute immediately upon history expansion
+setopt APPEND_HISTORY            # Append to history file (important!)
 
-# Load Oh My Zsh
-source $ZSH/oh-my-zsh.sh
+# Directory navigation
+setopt AUTO_CD                   # Auto cd when entering just a path
+setopt AUTO_PUSHD                # Push the current directory visited on the stack
+setopt PUSHD_IGNORE_DUPS         # Do not store duplicates in the stack
+setopt PUSHD_SILENT              # Do not print the directory stack after pushd or popd
 
-# User configuration
+# Completion settings
+autoload -Uz compinit
+compinit -d ~/.zcompdump
 
-# Set language environment
+# Load zsh-completions
+fpath=(~/.zsh/zsh-completions/src $fpath)
+
+# Completion options
+setopt COMPLETE_IN_WORD          # Complete from both ends of a word
+setopt ALWAYS_TO_END             # Move cursor to the end of a completed word
+setopt PATH_DIRS                 # Perform path search even on command names with slashes
+setopt AUTO_MENU                 # Show completion menu on a successive tab press
+setopt AUTO_LIST                 # Automatically list choices on ambiguous completion
+setopt AUTO_PARAM_SLASH          # If completed parameter is a directory, add a trailing slash
+setopt MENU_COMPLETE             # Insert first match immediately on ambiguous completion
+unsetopt FLOW_CONTROL            # Disable start/stop characters in shell editor
+
+# Case-insensitive completion
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|[._-]=* r:|=*' 'l:|=* r:|=*'
+
+# Colored completion (ls colors)
+zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
+
+# Better completion for kill command
+zstyle ':completion:*:*:kill:*:processes' list-colors '=(#b) #([0-9]#) ([0-9a-z-]#)*=01;34=0=01'
+zstyle ':completion:*:*:*:*:processes' command "ps -u $USER -o pid,user,comm -w -w"
+
+# Cache completions
+zstyle ':completion:*' use-cache on
+zstyle ':completion:*' cache-path ~/.zsh/cache
+
+# Bash compatibility
+setopt BASH_REMATCH              # Enable regex matching like bash
+setopt KSH_ARRAYS                # Array indexing from 0 (bash-like)
+autoload -Uz bashcompinit && bashcompinit
+
+# Load plugins
+source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
+source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+
+# Autosuggestions configuration
+ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=240'
+ZSH_AUTOSUGGEST_STRATEGY=(history completion)
+ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
+
+# Syntax highlighting configuration
+ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern cursor)
+
+# Key bindings
+bindkey '^[[A' history-substring-search-up
+bindkey '^[[B' history-substring-search-down
+bindkey '^[[3~' delete-char
+bindkey '^[[H' beginning-of-line
+bindkey '^[[F' end-of-line
+
+# Environment variables
 export LANG=en_US.UTF-8
-
-# Preferred editor
 export EDITOR='vim'
-
-# Compilation flags
-export ARCHFLAGS="-arch $(uname -m)"
-
-# Aliases for convenience
-alias ll='ls -alF'
-alias la='ls -A'
-alias l='ls -CF'
-alias cls='clear'
-alias update='sudo apt update && sudo apt upgrade -y'
-alias dps='docker ps'
-alias dcu='docker compose up -d'
-alias dcd='docker compose down'
-alias dcl='docker compose logs -f'
+export VISUAL='vim'
+export PAGER='less'
 
 # Docker aliases
 alias d='docker'
 alias dc='docker compose'
+alias dps='docker ps'
+alias dpsa='docker ps -a'
+alias di='docker images'
+alias dcu='docker compose up -d'
+alias dcd='docker compose down'
+alias dcl='docker compose logs -f'
 alias dex='docker exec -it'
+alias drm='docker rm'
+alias drmi='docker rmi'
+alias dprune='docker system prune -af'
 
-# Git aliases (additional to plugin)
+# Git aliases
+alias g='git'
 alias gs='git status'
+alias gst='git status'
+alias ga='git add'
+alias gaa='git add --all'
+alias gc='git commit'
+alias gcm='git commit -m'
+alias gca='git commit -a'
+alias gcam='git commit -am'
 alias gp='git pull'
 alias gP='git push'
-alias gc='git commit'
-alias gca='git commit -a'
+alias gpo='git push origin'
+alias gl='git log --oneline --graph --decorate'
+alias gd='git diff'
+alias gb='git branch'
+alias gco='git checkout'
+alias gcb='git checkout -b'
 
-# System monitoring aliases
+# System aliases
+alias ll='ls -alFh'
+alias la='ls -A'
+alias l='ls -CF'
+alias cls='clear'
+alias c='clear'
+alias h='history'
+alias ..='cd ..'
+alias ...='cd ../..'
+alias ....='cd ../../..'
+alias .....='cd ../../../..'
+
+# System monitoring
 alias meminfo='free -h'
 alias cpuinfo='lscpu'
 alias diskinfo='df -h'
 alias ports='netstat -tulanp'
+alias psa='ps aux'
+alias psg='ps aux | grep'
+
+# Package management
+alias update='sudo apt update && sudo apt upgrade -y'
+alias install='sudo apt install'
+alias remove='sudo apt remove'
+alias search='apt search'
+alias autoremove='sudo apt autoremove -y'
 
 # Safety aliases
 alias rm='rm -i'
 alias cp='cp -i'
 alias mv='mv -i'
+alias mkdir='mkdir -pv'
 
-# Navigation aliases
-alias ..='cd ..'
-alias ...='cd ../..'
-alias ....='cd ../../..'
-
-# Bash compatibility: enable extended glob
-setopt extended_glob
-
-# Case-insensitive completion
-autoload -Uz compinit && compinit
-zstyle ':completion:*' matcher-list 'm:{a-z}={A-Za-z}'
-
-# History configuration
-HISTSIZE=10000
-SAVEHIST=10000
-HISTFILE=~/.zsh_history
-setopt HIST_IGNORE_ALL_DUPS
-setopt HIST_FIND_NO_DUPS
-setopt HIST_SAVE_NO_DUPS
-setopt INC_APPEND_HISTORY
-setopt SHARE_HISTORY
-
-# Auto-correction
-setopt CORRECT
-setopt CORRECT_ALL
-
-# Powerlevel10k configuration (minimal setup)
-[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
-ZSHRC
-
-    # Create Powerlevel10k config
-    cat > "$user_home/.p10k.zsh" <<'P10K'
-# Powerlevel10k configuration - Lean style with all features
-
-# Temporarily change options.
-'builtin' 'local' '-a' 'p10k_config_opts'
-[[ ! -o 'aliases'         ]] || p10k_config_opts+=('aliases')
-[[ ! -o 'sh_glob'         ]] || p10k_config_opts+=('sh_glob')
-[[ ! -o 'no_brace_expand' ]] || p10k_config_opts+=('no_brace_expand')
-'builtin' 'setopt' 'no_aliases' 'no_sh_glob' 'brace_expand'
-
-() {
-  emulate -L zsh -o extended_glob
-
-  # Unset all configuration options.
-  unset -m '(POWERLEVEL9K_|DEFAULT_USER)~POWERLEVEL9K_GITSTATUS_DIR'
-
-  # Zsh >= 5.1 is required.
-  autoload -Uz is-at-least && is-at-least 5.1 || return
-
-  # Prompt style: lean, classic, rainbow, pure
-  typeset -g POWERLEVEL9K_MODE=nerdfont-complete
-  typeset -g POWERLEVEL9K_PROMPT_CHAR_OK_VIINS_FOREGROUND=green
-  typeset -g POWERLEVEL9K_PROMPT_CHAR_ERROR_VIINS_FOREGROUND=red
-
-  # Left prompt elements
-  typeset -g POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(
-    os_icon                 # OS identifier
-    dir                     # current directory
-    vcs                     # git status
-    prompt_char             # prompt symbol
-  )
-
-  # Right prompt elements
-  typeset -g POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(
-    status                  # exit code
-    command_execution_time  # duration of last command
-    background_jobs         # background jobs
-    direnv                  # direnv status
-    virtualenv              # python virtualenv
-    anaconda                # conda environment
-    pyenv                   # python version
-    nodeenv                 # node.js version
-    nvm                     # node.js version from nvm
-    node_version            # node version
-    go_version              # go version
-    rust_version            # rust version
-    docker_context          # docker context
-    kubecontext             # kubernetes context
-    time                    # current time
-  )
-
-  # Basic style options
-  typeset -g POWERLEVEL9K_BACKGROUND=
-  typeset -g POWERLEVEL9K_{LEFT,RIGHT}_{LEFT,RIGHT}_WHITESPACE=
-  typeset -g POWERLEVEL9K_{LEFT,RIGHT}_SUBSEGMENT_SEPARATOR=' '
-  typeset -g POWERLEVEL9K_{LEFT,RIGHT}_SEGMENT_SEPARATOR=
-
-  # Current directory - show full path
-  typeset -g POWERLEVEL9K_SHORTEN_STRATEGY=truncate_to_unique
-  typeset -g POWERLEVEL9K_SHORTEN_DELIMITER=
-  typeset -g POWERLEVEL9K_DIR_FOREGROUND=blue
-
-  # Git settings
-  typeset -g POWERLEVEL9K_VCS_FOREGROUND=green
-  typeset -g POWERLEVEL9K_VCS_MODIFIED_FOREGROUND=yellow
-  typeset -g POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND=cyan
-
-  # Command execution time
-  typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_THRESHOLD=3
-  typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_FOREGROUND=yellow
-
-  # Time format
-  typeset -g POWERLEVEL9K_TIME_FORMAT='%D{%H:%M:%S}'
-  typeset -g POWERLEVEL9K_TIME_FOREGROUND=white
-
-  # Instant prompt mode
-  typeset -g POWERLEVEL9K_INSTANT_PROMPT=verbose
-
-  # Transient prompt
-  typeset -g POWERLEVEL9K_TRANSIENT_PROMPT=always
+# Useful functions
+mkcd() {
+    mkdir -p "$1" && cd "$1"
 }
 
-# Restore options.
-(( ${#p10k_config_opts} )) && setopt ${p10k_config_opts[@]}
-'builtin' 'unset' 'p10k_config_opts'
-P10K
+extract() {
+    if [ -f $1 ] ; then
+        case $1 in
+            *.tar.bz2)   tar xjf $1     ;;
+            *.tar.gz)    tar xzf $1     ;;
+            *.bz2)       bunzip2 $1     ;;
+            *.rar)       unrar e $1     ;;
+            *.gz)        gunzip $1      ;;
+            *.tar)       tar xf $1      ;;
+            *.tbz2)      tar xjf $1     ;;
+            *.tgz)       tar xzf $1     ;;
+            *.zip)       unzip $1       ;;
+            *.Z)         uncompress $1  ;;
+            *.7z)        7z x $1        ;;
+            *)           echo "'$1' cannot be extracted via extract()" ;;
+        esac
+    else
+        echo "'$1' is not a valid file"
+    fi
+}
 
-    chown -R $username:$username "$user_home/.zshrc" "$user_home/.p10k.zsh" "$user_home/.oh-my-zsh"
+# Initialize Starship prompt
+eval "$(starship init zsh)"
+ZSHRC
+
+    # Create Starship config
+    mkdir -p "$user_home/.config"
+    cat > "$user_home/.config/starship.toml" <<'STARSHIP'
+# Starship configuration - Clean and informative
+
+# Get editor completions based on the config schema
+"$schema" = 'https://starship.rs/config-schema.json'
+
+# Timeout for commands executed by starship
+command_timeout = 1000
+
+# Add new line before prompt
+add_newline = true
+
+# Format configuration
+format = """
+[┌─](bold green)$username$hostname$directory$git_branch$git_status$docker_context$python$nodejs$golang$rust$java
+[└─>](bold green) """
+
+# Right prompt
+right_format = """$cmd_duration$time"""
+
+[username]
+style_user = 'bold cyan'
+style_root = 'bold red'
+format = '[$user]($style)@'
+disabled = false
+show_always = true
+
+[hostname]
+ssh_only = false
+format = '[$hostname](bold cyan) '
+disabled = false
+
+[directory]
+truncation_length = 3
+truncate_to_repo = true
+style = 'bold blue'
+format = 'in [$path]($style)[$read_only]($read_only_style) '
+
+[character]
+success_symbol = '[➜](bold green)'
+error_symbol = '[✗](bold red)'
+
+[git_branch]
+symbol = ' '
+format = 'on [$symbol$branch]($style) '
+style = 'bold purple'
+
+[git_status]
+format = '([\[$all_status$ahead_behind\]]($style) )'
+style = 'bold red'
+conflicted = '🏳'
+ahead = '⇡${count}'
+behind = '⇣${count}'
+diverged = '⇕⇡${ahead_count}⇣${behind_count}'
+untracked = '?${count}'
+stashed = '$${count}'
+modified = '!${count}'
+staged = '+${count}'
+renamed = '»${count}'
+deleted = '✘${count}'
+
+[cmd_duration]
+min_time = 500
+format = 'took [$duration](bold yellow)'
+show_milliseconds = false
+
+[time]
+disabled = false
+format = '[$time](bold white)'
+time_format = '%T'
+
+[docker_context]
+symbol = ' '
+format = 'via [$symbol$context]($style) '
+style = 'bold blue'
+only_with_files = true
+
+[python]
+symbol = ' '
+format = 'via [${symbol}${pyenv_prefix}(${version} )(\($virtualenv\) )]($style)'
+style = 'bold yellow'
+
+[nodejs]
+symbol = ' '
+format = 'via [$symbol($version )]($style)'
+style = 'bold green'
+
+[golang]
+symbol = ' '
+format = 'via [$symbol($version )]($style)'
+style = 'bold cyan'
+
+[rust]
+symbol = ' '
+format = 'via [$symbol($version )]($style)'
+style = 'bold red'
+
+[java]
+symbol = ' '
+format = 'via [$symbol($version )]($style)'
+style = 'bold red'
+
+[package]
+symbol = ' '
+format = 'via [$symbol$version]($style) '
+style = 'bold 208'
+
+[memory_usage]
+disabled = false
+threshold = 75
+symbol = ' '
+format = 'via $symbol[$ram( | $swap)]($style) '
+style = 'bold dimmed white'
+
+[battery]
+full_symbol = '🔋'
+charging_symbol = '⚡️'
+discharging_symbol = '💀'
+STARSHIP
+
+    chown -R $username:$username "$user_home/.zshrc" "$user_home/.zsh" "$user_home/.config" 2>/dev/null || true
 
     # Change default shell to Zsh
     chsh -s $(which zsh) $username
@@ -537,15 +641,22 @@ if ! command -v zsh &> /dev/null; then
     exit 1
 fi
 
+# Ensure starship is available
+if ! command -v starship &> /dev/null; then
+    error "Starship installation failed!"
+    exit 1
+fi
+
 echo ""
-info "Zsh + Oh My Zsh configured successfully!"
+info "Zsh + Starship configured successfully!"
 info "Features enabled:"
-info "  • Powerlevel10k theme (beautiful prompt)"
+info "  • Starship prompt (universal, works everywhere)"
 info "  • Autosuggestions (fish-like suggestions)"
 info "  • Syntax highlighting"
 info "  • Git integration"
-info "  • Docker & Docker Compose plugins"
-info "  • Command completion"
+info "  • Docker context display"
+info "  • Advanced completion system"
+info "  • 50+ useful aliases"
 info "  • Bash compatibility mode"
 echo ""
 
