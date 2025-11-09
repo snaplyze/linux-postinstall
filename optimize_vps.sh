@@ -156,6 +156,400 @@ echo ""
 read -p "Press Enter once you've verified SSH access works..."
 
 ################################################################################
+# 1.5. System Localization Settings
+################################################################################
+log "Step 1.5: Configuring system localization..."
+
+echo ""
+info "Setting up system locale, hostname, and timezone..."
+echo ""
+
+# Locale selection
+echo "Select system locale:"
+echo "1) en_US.UTF-8 (English)"
+echo "2) ru_RU.UTF-8 (Russian)"
+echo "3) Both (en_US.UTF-8 + ru_RU.UTF-8)"
+read -p "Enter choice [1-3]: " LOCALE_CHOICE
+
+case $LOCALE_CHOICE in
+    1)
+        LOCALE_TO_GENERATE="en_US.UTF-8"
+        DEFAULT_LOCALE="en_US.UTF-8"
+        log "Selected locale: English (en_US.UTF-8)"
+        ;;
+    2)
+        LOCALE_TO_GENERATE="ru_RU.UTF-8"
+        DEFAULT_LOCALE="ru_RU.UTF-8"
+        log "Selected locale: Russian (ru_RU.UTF-8)"
+        ;;
+    3)
+        LOCALE_TO_GENERATE="en_US.UTF-8 ru_RU.UTF-8"
+        DEFAULT_LOCALE="en_US.UTF-8"
+        log "Selected locales: English + Russian"
+        ;;
+    *)
+        warn "Invalid choice. Using English (en_US.UTF-8) as default"
+        LOCALE_TO_GENERATE="en_US.UTF-8"
+        DEFAULT_LOCALE="en_US.UTF-8"
+        ;;
+esac
+
+# Generate locales
+log "Generating locales..."
+for locale in $LOCALE_TO_GENERATE; do
+    if ! locale -a | grep -qi "^${locale%.*}"; then
+        # Add locale to locale.gen if not present
+        if ! grep -q "^${locale}" /etc/locale.gen 2>/dev/null; then
+            echo "${locale} UTF-8" >> /etc/locale.gen
+        fi
+        # Uncomment locale in locale.gen
+        sed -i "s/^# *${locale}/${locale}/" /etc/locale.gen 2>/dev/null || true
+    fi
+done
+
+# Generate and update locales
+locale-gen
+update-locale LANG=$DEFAULT_LOCALE
+
+log "Default locale set to: $DEFAULT_LOCALE"
+
+# Hostname configuration
+echo ""
+read -p "Enter new hostname (press Enter to keep current: $(hostname)): " NEW_HOSTNAME
+
+if [ -n "$NEW_HOSTNAME" ]; then
+    # Validate hostname
+    if [[ $NEW_HOSTNAME =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]]; then
+        OLD_HOSTNAME=$(hostname)
+
+        # Set new hostname
+        hostnamectl set-hostname "$NEW_HOSTNAME"
+
+        # Update /etc/hosts
+        sed -i "s/127.0.1.1.*/127.0.1.1\t${NEW_HOSTNAME}/" /etc/hosts
+
+        # Add entry if not exists
+        if ! grep -q "127.0.1.1" /etc/hosts; then
+            echo "127.0.1.1	${NEW_HOSTNAME}" >> /etc/hosts
+        fi
+
+        log "Hostname changed: $OLD_HOSTNAME -> $NEW_HOSTNAME"
+    else
+        warn "Invalid hostname format. Keeping current hostname: $(hostname)"
+    fi
+else
+    log "Keeping current hostname: $(hostname)"
+fi
+
+# Timezone configuration
+echo ""
+info "Current timezone: $(timedatectl show --property=Timezone --value)"
+info "Examples: Europe/Moscow, America/New_York, Asia/Tokyo, UTC"
+echo ""
+read -p "Enter timezone (press Enter to keep current): " NEW_TIMEZONE
+
+if [ -n "$NEW_TIMEZONE" ]; then
+    # Validate timezone
+    if timedatectl list-timezones | grep -q "^${NEW_TIMEZONE}$"; then
+        timedatectl set-timezone "$NEW_TIMEZONE"
+        log "Timezone set to: $NEW_TIMEZONE"
+    else
+        warn "Invalid timezone. Keeping current timezone."
+        warn "Use 'timedatectl list-timezones' to see available timezones."
+    fi
+else
+    log "Keeping current timezone: $(timedatectl show --property=Timezone --value)"
+fi
+
+# Enable NTP
+timedatectl set-ntp true
+log "NTP synchronization enabled"
+
+echo ""
+info "Localization configured:"
+info "  Locale: $DEFAULT_LOCALE"
+info "  Hostname: $(hostname)"
+info "  Timezone: $(timedatectl show --property=Timezone --value)"
+echo ""
+
+################################################################################
+# 1.7. Zsh and Oh My Zsh Installation
+################################################################################
+log "Step 1.7: Installing and configuring Zsh + Oh My Zsh..."
+
+echo ""
+info "Installing Zsh and Oh My Zsh for better shell experience..."
+echo ""
+
+# Install Zsh and dependencies
+apt-get install -y zsh git curl fonts-powerline
+
+# Function to setup Zsh for a user
+setup_zsh_for_user() {
+    local username=$1
+    local user_home=$(eval echo ~$username)
+
+    log "Setting up Zsh for user: $username"
+
+    # Install Oh My Zsh
+    if [ ! -d "$user_home/.oh-my-zsh" ]; then
+        # Download and install Oh My Zsh (non-interactive)
+        su - $username -c 'sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended'
+        log "Oh My Zsh installed for $username"
+    else
+        log "Oh My Zsh already installed for $username"
+    fi
+
+    # Install Powerlevel10k theme
+    if [ ! -d "$user_home/.oh-my-zsh/custom/themes/powerlevel10k" ]; then
+        su - $username -c "git clone --depth=1 https://github.com/romkatv/powerlevel10k.git $user_home/.oh-my-zsh/custom/themes/powerlevel10k"
+        log "Powerlevel10k theme installed for $username"
+    fi
+
+    # Install useful plugins
+    # zsh-autosuggestions
+    if [ ! -d "$user_home/.oh-my-zsh/custom/plugins/zsh-autosuggestions" ]; then
+        su - $username -c "git clone https://github.com/zsh-users/zsh-autosuggestions $user_home/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+        log "zsh-autosuggestions plugin installed for $username"
+    fi
+
+    # zsh-syntax-highlighting
+    if [ ! -d "$user_home/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" ]; then
+        su - $username -c "git clone https://github.com/zsh-users/zsh-syntax-highlighting.git $user_home/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+        log "zsh-syntax-highlighting plugin installed for $username"
+    fi
+
+    # zsh-completions
+    if [ ! -d "$user_home/.oh-my-zsh/custom/plugins/zsh-completions" ]; then
+        su - $username -c "git clone https://github.com/zsh-users/zsh-completions $user_home/.oh-my-zsh/custom/plugins/zsh-completions"
+        log "zsh-completions plugin installed for $username"
+    fi
+
+    # Create custom .zshrc with optimal configuration
+    cat > "$user_home/.zshrc" <<'ZSHRC'
+# Path to oh-my-zsh installation
+export ZSH="$HOME/.oh-my-zsh"
+
+# Set Powerlevel10k theme
+ZSH_THEME="powerlevel10k/powerlevel10k"
+
+# Enable Powerlevel10k instant prompt
+if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
+
+# Plugins
+plugins=(
+    git
+    docker
+    docker-compose
+    kubectl
+    sudo
+    command-not-found
+    colored-man-pages
+    zsh-autosuggestions
+    zsh-syntax-highlighting
+    zsh-completions
+)
+
+# Load Oh My Zsh
+source $ZSH/oh-my-zsh.sh
+
+# User configuration
+
+# Set language environment
+export LANG=en_US.UTF-8
+
+# Preferred editor
+export EDITOR='vim'
+
+# Compilation flags
+export ARCHFLAGS="-arch $(uname -m)"
+
+# Aliases for convenience
+alias ll='ls -alF'
+alias la='ls -A'
+alias l='ls -CF'
+alias cls='clear'
+alias update='sudo apt update && sudo apt upgrade -y'
+alias dps='docker ps'
+alias dcu='docker compose up -d'
+alias dcd='docker compose down'
+alias dcl='docker compose logs -f'
+
+# Docker aliases
+alias d='docker'
+alias dc='docker compose'
+alias dex='docker exec -it'
+
+# Git aliases (additional to plugin)
+alias gs='git status'
+alias gp='git pull'
+alias gP='git push'
+alias gc='git commit'
+alias gca='git commit -a'
+
+# System monitoring aliases
+alias meminfo='free -h'
+alias cpuinfo='lscpu'
+alias diskinfo='df -h'
+alias ports='netstat -tulanp'
+
+# Safety aliases
+alias rm='rm -i'
+alias cp='cp -i'
+alias mv='mv -i'
+
+# Navigation aliases
+alias ..='cd ..'
+alias ...='cd ../..'
+alias ....='cd ../../..'
+
+# Bash compatibility: enable extended glob
+setopt extended_glob
+
+# Case-insensitive completion
+autoload -Uz compinit && compinit
+zstyle ':completion:*' matcher-list 'm:{a-z}={A-Za-z}'
+
+# History configuration
+HISTSIZE=10000
+SAVEHIST=10000
+HISTFILE=~/.zsh_history
+setopt HIST_IGNORE_ALL_DUPS
+setopt HIST_FIND_NO_DUPS
+setopt HIST_SAVE_NO_DUPS
+setopt INC_APPEND_HISTORY
+setopt SHARE_HISTORY
+
+# Auto-correction
+setopt CORRECT
+setopt CORRECT_ALL
+
+# Powerlevel10k configuration (minimal setup)
+[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
+ZSHRC
+
+    # Create Powerlevel10k config
+    cat > "$user_home/.p10k.zsh" <<'P10K'
+# Powerlevel10k configuration - Lean style with all features
+
+# Temporarily change options.
+'builtin' 'local' '-a' 'p10k_config_opts'
+[[ ! -o 'aliases'         ]] || p10k_config_opts+=('aliases')
+[[ ! -o 'sh_glob'         ]] || p10k_config_opts+=('sh_glob')
+[[ ! -o 'no_brace_expand' ]] || p10k_config_opts+=('no_brace_expand')
+'builtin' 'setopt' 'no_aliases' 'no_sh_glob' 'brace_expand'
+
+() {
+  emulate -L zsh -o extended_glob
+
+  # Unset all configuration options.
+  unset -m '(POWERLEVEL9K_|DEFAULT_USER)~POWERLEVEL9K_GITSTATUS_DIR'
+
+  # Zsh >= 5.1 is required.
+  autoload -Uz is-at-least && is-at-least 5.1 || return
+
+  # Prompt style: lean, classic, rainbow, pure
+  typeset -g POWERLEVEL9K_MODE=nerdfont-complete
+  typeset -g POWERLEVEL9K_PROMPT_CHAR_OK_VIINS_FOREGROUND=green
+  typeset -g POWERLEVEL9K_PROMPT_CHAR_ERROR_VIINS_FOREGROUND=red
+
+  # Left prompt elements
+  typeset -g POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(
+    os_icon                 # OS identifier
+    dir                     # current directory
+    vcs                     # git status
+    prompt_char             # prompt symbol
+  )
+
+  # Right prompt elements
+  typeset -g POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(
+    status                  # exit code
+    command_execution_time  # duration of last command
+    background_jobs         # background jobs
+    direnv                  # direnv status
+    virtualenv              # python virtualenv
+    anaconda                # conda environment
+    pyenv                   # python version
+    nodeenv                 # node.js version
+    nvm                     # node.js version from nvm
+    node_version            # node version
+    go_version              # go version
+    rust_version            # rust version
+    docker_context          # docker context
+    kubecontext             # kubernetes context
+    time                    # current time
+  )
+
+  # Basic style options
+  typeset -g POWERLEVEL9K_BACKGROUND=
+  typeset -g POWERLEVEL9K_{LEFT,RIGHT}_{LEFT,RIGHT}_WHITESPACE=
+  typeset -g POWERLEVEL9K_{LEFT,RIGHT}_SUBSEGMENT_SEPARATOR=' '
+  typeset -g POWERLEVEL9K_{LEFT,RIGHT}_SEGMENT_SEPARATOR=
+
+  # Current directory - show full path
+  typeset -g POWERLEVEL9K_SHORTEN_STRATEGY=truncate_to_unique
+  typeset -g POWERLEVEL9K_SHORTEN_DELIMITER=
+  typeset -g POWERLEVEL9K_DIR_FOREGROUND=blue
+
+  # Git settings
+  typeset -g POWERLEVEL9K_VCS_FOREGROUND=green
+  typeset -g POWERLEVEL9K_VCS_MODIFIED_FOREGROUND=yellow
+  typeset -g POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND=cyan
+
+  # Command execution time
+  typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_THRESHOLD=3
+  typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_FOREGROUND=yellow
+
+  # Time format
+  typeset -g POWERLEVEL9K_TIME_FORMAT='%D{%H:%M:%S}'
+  typeset -g POWERLEVEL9K_TIME_FOREGROUND=white
+
+  # Instant prompt mode
+  typeset -g POWERLEVEL9K_INSTANT_PROMPT=verbose
+
+  # Transient prompt
+  typeset -g POWERLEVEL9K_TRANSIENT_PROMPT=always
+}
+
+# Restore options.
+(( ${#p10k_config_opts} )) && setopt ${p10k_config_opts[@]}
+'builtin' 'unset' 'p10k_config_opts'
+P10K
+
+    chown -R $username:$username "$user_home/.zshrc" "$user_home/.p10k.zsh" "$user_home/.oh-my-zsh"
+
+    # Change default shell to Zsh
+    chsh -s $(which zsh) $username
+    log "Default shell changed to Zsh for $username"
+}
+
+# Setup Zsh for root
+setup_zsh_for_user root
+
+# Setup Zsh for new user
+setup_zsh_for_user $NEW_USER
+
+# Ensure zsh is available
+if ! command -v zsh &> /dev/null; then
+    error "Zsh installation failed!"
+    exit 1
+fi
+
+echo ""
+info "Zsh + Oh My Zsh configured successfully!"
+info "Features enabled:"
+info "  • Powerlevel10k theme (beautiful prompt)"
+info "  • Autosuggestions (fish-like suggestions)"
+info "  • Syntax highlighting"
+info "  • Git integration"
+info "  • Docker & Docker Compose plugins"
+info "  • Command completion"
+info "  • Bash compatibility mode"
+echo ""
+
+################################################################################
 # 2. Detect CPU Architecture and RAM
 ################################################################################
 log "Step 2: Detecting system specifications..."
@@ -583,18 +977,9 @@ else
 fi
 
 ################################################################################
-# 14. Timezone and NTP
+# 14. Optimize tmpfs
 ################################################################################
-log "Step 14: Setting up timezone and NTP..."
-
-timedatectl set-ntp true
-systemctl enable systemd-timesyncd
-systemctl start systemd-timesyncd
-
-################################################################################
-# 15. Optimize tmpfs
-################################################################################
-log "Step 15: Optimizing tmpfs..."
+log "Step 14: Optimizing tmpfs..."
 
 # Check if entries already exist to avoid duplicates
 if ! grep -q "tmpfs /tmp" /etc/fstab; then
@@ -605,9 +990,9 @@ EOF
 fi
 
 ################################################################################
-# 16. Disable Unnecessary Services
+# 15. Disable Unnecessary Services
 ################################################################################
-log "Step 16: Disabling unnecessary services..."
+log "Step 15: Disabling unnecessary services..."
 
 SERVICES_TO_DISABLE=(
     "bluetooth.service"
@@ -624,9 +1009,9 @@ for service in "${SERVICES_TO_DISABLE[@]}"; do
 done
 
 ################################################################################
-# 17. I/O Scheduler Optimization
+# 16. I/O Scheduler Optimization
 ################################################################################
-log "Step 17: Optimizing I/O scheduler..."
+log "Step 16: Optimizing I/O scheduler..."
 
 cat > /etc/udev/rules.d/60-ioschedulers.conf <<EOF
 # Set deadline scheduler for SSDs and none for NVMe
@@ -635,9 +1020,9 @@ ACTION=="add|change", KERNEL=="nvme[0-9]n[0-9]", ATTR{queue/rotational}=="0", AT
 EOF
 
 ################################################################################
-# 18. Create Monitoring Script
+# 17. Create Monitoring Script
 ################################################################################
-log "Step 18: Creating monitoring script..."
+log "Step 17: Creating monitoring script..."
 
 cat > /usr/local/bin/vps-monitor.sh <<'SCRIPT'
 #!/bin/bash
@@ -679,9 +1064,9 @@ SCRIPT
 chmod +x /usr/local/bin/vps-monitor.sh
 
 ################################################################################
-# 19. Create Cleanup Script
+# 18. Create Cleanup Script
 ################################################################################
-log "Step 19: Creating cleanup script..."
+log "Step 18: Creating cleanup script..."
 
 cat > /usr/local/bin/vps-cleanup.sh <<'SCRIPT'
 #!/bin/bash
@@ -720,9 +1105,9 @@ EOF
 chmod +x /etc/cron.weekly/vps-cleanup
 
 ################################################################################
-# 20. Network Performance Test Script
+# 19. Network Performance Test Script
 ################################################################################
-log "Step 20: Creating network performance test script..."
+log "Step 19: Creating network performance test script..."
 
 cat > /usr/local/bin/network-test.sh <<'SCRIPT'
 #!/bin/bash
@@ -746,9 +1131,9 @@ SCRIPT
 chmod +x /usr/local/bin/network-test.sh
 
 ################################################################################
-# 21. System Information Script
+# 20. System Information Script
 ################################################################################
-log "Step 21: Creating system information script..."
+log "Step 20: Creating system information script..."
 
 cat > /usr/local/bin/vps-info.sh <<'SCRIPT'
 #!/bin/bash
@@ -802,6 +1187,11 @@ echo "==========================================================================
 echo ""
 log "Summary of optimizations:"
 log "  ✓ OS detected: $OS_NAME $OS_VERSION ($OS_CODENAME)"
+log "  ✓ Locale: $DEFAULT_LOCALE"
+log "  ✓ Hostname: $(hostname)"
+log "  ✓ Timezone: $(timedatectl show --property=Timezone --value)"
+log "  ✓ Zsh + Oh My Zsh installed for root and $NEW_USER"
+log "  ✓ Powerlevel10k theme with plugins (autosuggestions, syntax highlighting)"
 log "  ✓ New user created: $NEW_USER (with sudo + docker access, passwordless)"
 log "  ✓ SSH keys configured for $NEW_USER"
 log "  ✓ System updated and essential packages installed"
