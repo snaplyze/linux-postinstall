@@ -318,11 +318,6 @@ setup_zsh_for_user() {
 
     # Create .zshrc with optimal configuration
     cat > "$user_home/.zshrc" <<'ZSHRC'
-# Enable Powerlevel10k instant prompt if exists (for compatibility)
-if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
-  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
-fi
-
 # History configuration
 HISTSIZE=50000
 SAVEHIST=50000
@@ -344,11 +339,11 @@ setopt PUSHD_IGNORE_DUPS         # Do not store duplicates in the stack
 setopt PUSHD_SILENT              # Do not print the directory stack after pushd or popd
 
 # Completion settings
+# Load zsh-completions BEFORE compinit
+fpath=(~/.zsh/zsh-completions/src $fpath)
+
 autoload -Uz compinit
 compinit -d ~/.zcompdump
-
-# Load zsh-completions
-fpath=(~/.zsh/zsh-completions/src $fpath)
 
 # Completion options
 setopt COMPLETE_IN_WORD          # Complete from both ends of a word
@@ -379,10 +374,7 @@ setopt BASH_REMATCH              # Enable regex matching like bash
 setopt KSH_ARRAYS                # Array indexing from 0 (bash-like)
 autoload -Uz bashcompinit && bashcompinit
 
-# Load plugins
-source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
-source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
-
+# Plugin configuration (BEFORE loading plugins)
 # Autosuggestions configuration
 ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=240'
 ZSH_AUTOSUGGEST_STRATEGY=(history completion)
@@ -391,9 +383,13 @@ ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
 # Syntax highlighting configuration
 ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern cursor)
 
+# Load plugins (syntax-highlighting MUST be last!)
+source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
+source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+
 # Key bindings
-bindkey '^[[A' history-substring-search-up
-bindkey '^[[B' history-substring-search-down
+bindkey '^[[A' up-line-or-history
+bindkey '^[[B' down-line-or-history
 bindkey '^[[3~' delete-char
 bindkey '^[[H' beginning-of-line
 bindkey '^[[F' end-of-line
@@ -503,10 +499,7 @@ ZSHRC
     # Create Starship config
     mkdir -p "$user_home/.config"
     cat > "$user_home/.config/starship.toml" <<'STARSHIP'
-# Starship configuration - Clean and informative
-
-# Get editor completions based on the config schema
-"$schema" = 'https://starship.rs/config-schema.json'
+# Starship configuration - Clean and universal
 
 # Timeout for commands executed by starship
 command_timeout = 1000
@@ -514,30 +507,42 @@ command_timeout = 1000
 # Add new line before prompt
 add_newline = true
 
-# Format configuration
+# Format configuration - simple and clean
 format = """
-[┌─](bold green)$username$hostname$directory$git_branch$git_status$docker_context$python$nodejs$golang$rust$java
-[└─>](bold green) """
+$username\
+$hostname\
+$directory\
+$git_branch\
+$git_status\
+$docker_context\
+$python\
+$nodejs\
+$golang\
+$rust\
+$java\
+$line_break\
+$character"""
 
 # Right prompt
-right_format = """$cmd_duration$time"""
+right_format = """$cmd_duration $time"""
 
 [username]
-style_user = 'bold cyan'
-style_root = 'bold red'
-format = '[$user]($style)@'
+style_user = 'cyan bold'
+style_root = 'red bold'
+format = '[$user]($style) '
 disabled = false
 show_always = true
 
 [hostname]
 ssh_only = false
-format = '[$hostname](bold cyan) '
+format = 'on [$hostname](bold yellow) '
 disabled = false
+trim_at = '.'
 
 [directory]
 truncation_length = 3
 truncate_to_repo = true
-style = 'bold blue'
+style = 'blue bold'
 format = 'in [$path]($style)[$read_only]($read_only_style) '
 
 [character]
@@ -545,23 +550,23 @@ success_symbol = '[➜](bold green)'
 error_symbol = '[✗](bold red)'
 
 [git_branch]
-symbol = ' '
+symbol = ''
 format = 'on [$symbol$branch]($style) '
-style = 'bold purple'
+style = 'purple bold'
 
 [git_status]
 format = '([\[$all_status$ahead_behind\]]($style) )'
-style = 'bold red'
-conflicted = '🏳'
+style = 'red bold'
+conflicted = '='
 ahead = '⇡${count}'
 behind = '⇣${count}'
-diverged = '⇕⇡${ahead_count}⇣${behind_count}'
+diverged = '⇕${ahead_count}⇣${behind_count}'
 untracked = '?${count}'
-stashed = '$${count}'
+stashed = '\$${count}'
 modified = '!${count}'
 staged = '+${count}'
 renamed = '»${count}'
-deleted = '✘${count}'
+deleted = 'x${count}'
 
 [cmd_duration]
 min_time = 500
@@ -574,58 +579,70 @@ format = '[$time](bold white)'
 time_format = '%T'
 
 [docker_context]
-symbol = ' '
-format = 'via [$symbol$context]($style) '
-style = 'bold blue'
+symbol = 'docker'
+format = 'via [$symbol $context]($style) '
+style = 'blue bold'
 only_with_files = true
 
 [python]
-symbol = ' '
-format = 'via [${symbol}${pyenv_prefix}(${version} )(\($virtualenv\) )]($style)'
-style = 'bold yellow'
+symbol = 'py'
+format = 'via [$symbol $version]($style) '
+style = 'yellow bold'
 
 [nodejs]
-symbol = ' '
-format = 'via [$symbol($version )]($style)'
-style = 'bold green'
+symbol = 'node'
+format = 'via [$symbol $version]($style) '
+style = 'green bold'
 
 [golang]
-symbol = ' '
-format = 'via [$symbol($version )]($style)'
-style = 'bold cyan'
+symbol = 'go'
+format = 'via [$symbol $version]($style) '
+style = 'cyan bold'
 
 [rust]
-symbol = ' '
-format = 'via [$symbol($version )]($style)'
-style = 'bold red'
+symbol = 'rust'
+format = 'via [$symbol $version]($style) '
+style = 'red bold'
 
 [java]
-symbol = ' '
-format = 'via [$symbol($version )]($style)'
-style = 'bold red'
+symbol = 'java'
+format = 'via [$symbol $version]($style) '
+style = 'red bold'
 
 [package]
-symbol = ' '
-format = 'via [$symbol$version]($style) '
-style = 'bold 208'
+disabled = true
 
 [memory_usage]
-disabled = false
-threshold = 75
-symbol = ' '
-format = 'via $symbol[$ram( | $swap)]($style) '
-style = 'bold dimmed white'
+disabled = true
 
 [battery]
-full_symbol = '🔋'
-charging_symbol = '⚡️'
-discharging_symbol = '💀'
+disabled = true
 STARSHIP
 
-    chown -R $username:$username "$user_home/.zshrc" "$user_home/.zsh" "$user_home/.config" 2>/dev/null || true
+    # Create cache directory for completions
+    mkdir -p "$user_home/.zsh/cache"
+
+    # Set correct ownership for all created files and directories
+    chown -R $username:$username "$user_home/.zshrc" "$user_home/.zsh" "$user_home/.config" "$user_home/.zcompdump" 2>/dev/null || true
+
+    # Set correct permissions
+    chmod 644 "$user_home/.zshrc" 2>/dev/null || true
+    chmod 644 "$user_home/.config/starship.toml" 2>/dev/null || true
 
     # Change default shell to Zsh
-    chsh -s $(which zsh) $username
+    local zsh_path=$(which zsh)
+    if [ -z "$zsh_path" ]; then
+        error "Cannot find zsh binary"
+        return 1
+    fi
+
+    # Ensure zsh is in /etc/shells
+    if ! grep -q "^$zsh_path$" /etc/shells; then
+        echo "$zsh_path" >> /etc/shells
+        log "Added $zsh_path to /etc/shells"
+    fi
+
+    chsh -s "$zsh_path" "$username"
     log "Default shell changed to Zsh for $username"
 }
 
