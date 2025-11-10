@@ -28,10 +28,10 @@ LOCALE_TO_GENERATE=${LOCALE_TO_GENERATE:-"ru_RU.UTF-8"}
 DEFAULT_LOCALE=${DEFAULT_LOCALE:-"ru_RU.UTF-8"}
 QUIET_MODE=${QUIET_MODE:-true}
 
-# Force English locale for all operations
-export LC_ALL="en_US.UTF-8"
-export LANG="en_US.UTF-8"
-export LANGUAGE="en_US:en"
+# Force basic locale (will be updated later after proper setup)
+export LC_ALL=C
+export LANG=C
+export LANGUAGE=en
 
 # Helper functions
 require_root() {
@@ -102,7 +102,7 @@ setup_locale() {
     
     # Ensure locales package is installed
     if ! dpkg -s locales >/dev/null 2>&1; then
-        install_packages locales
+        DEBIAN_FRONTEND=noninteractive apt-get install -y locales >> "$LOG_FILE" 2>&1
     fi
     
     # Configure locales
@@ -114,13 +114,26 @@ setup_locale() {
         fi
     done
     
-    # Generate and set locale
-    locale-gen >/dev/null 2>&1
-    update-locale LANG="$default_locale" LC_ALL="$default_locale" >/dev/null 2>&1
-    export LANG="$default_locale"
-    export LC_ALL="$default_locale"
+    # Generate locales with error handling
+    if locale-gen 2>> "$LOG_FILE"; then
+        log "Locales generated successfully"
+    else
+        warn "Some locales failed to generate, continuing..."
+    fi
     
-    log "Locale configured: $default_locale"
+    # Set system default locale
+    if update-locale LANG="$default_locale" LC_ALL="$default_locale" 2>> "$LOG_FILE"; then
+        # Export for current session
+        export LANG="$default_locale"
+        export LC_ALL="$default_locale"
+        export LANGUAGE="${default_locale%.*}:en"
+        log "Locale configured: $default_locale"
+    else
+        warn "Failed to set locale $default_locale, keeping C locale"
+        export LANG=C
+        export LC_ALL=C
+        export LANGUAGE=en
+    fi
 }
 
 require_root
@@ -171,10 +184,10 @@ step "Installing dependencies and detecting system..."
 # Single update and install essential packages
 {
     apt-get update
-    install_packages bc locales curl wget git
+    DEBIAN_FRONTEND=noninteractive apt-get install -y bc locales curl wget git
 } >> "$LOG_FILE" 2>&1
 
-# Setup locale once
+# Setup locale once (after packages are installed)
 setup_locale "$LOCALE_TO_GENERATE" "$DEFAULT_LOCALE"
 
 # Detect OS
@@ -277,8 +290,8 @@ read -p "Press Enter once verified..."
 ################################################################################
 step "Configuring system localization..."
 
-# Locale selection (only if not predefined)
-if [[ -z "$LOCALE_TO_GENERATE" || "$LOCALE_TO_GENERATE" == "en_US.UTF-8" ]]; then
+# Locale selection (only if not predefined and not in quiet mode)
+if [[ -z "$LOCALE_TO_GENERATE" || "$LOCALE_TO_GENERATE" == "en_US.UTF-8" ]] && [[ "$QUIET_MODE" == "false" ]]; then
     echo "Select system locale:"
     echo "1) en_US.UTF-8 (English)"
     echo "2) ru_RU.UTF-8 (Russian)"
@@ -304,6 +317,9 @@ if [[ -z "$LOCALE_TO_GENERATE" || "$LOCALE_TO_GENERATE" == "en_US.UTF-8" ]]; the
             DEFAULT_LOCALE="en_US.UTF-8"
             ;;
     esac
+    setup_locale "$LOCALE_TO_GENERATE" "$DEFAULT_LOCALE"
+elif [[ -z "$LOCALE_TO_GENERATE" || "$LOCALE_TO_GENERATE" == "en_US.UTF-8" ]]; then
+    # In quiet mode, use English by default
     setup_locale "$LOCALE_TO_GENERATE" "$DEFAULT_LOCALE"
 fi
 
