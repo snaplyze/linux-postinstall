@@ -318,22 +318,34 @@ setup_zsh_for_user() {
     # Create plugins directory
     mkdir -p "$user_home/.zsh"
 
-    # Install zsh-autosuggestions - FIXED: правильная установка
+    # Install zsh-autosuggestions
     if [ ! -d "$user_home/.zsh/zsh-autosuggestions" ]; then
         git clone https://github.com/zsh-users/zsh-autosuggestions "$user_home/.zsh/zsh-autosuggestions"
         log "zsh-autosuggestions plugin installed for $username"
+    else
+        # Update existing plugin
+        cd "$user_home/.zsh/zsh-autosuggestions" && git pull origin master
+        log "zsh-autosuggestions plugin updated for $username"
     fi
 
-    # Install zsh-syntax-highlighting - FIXED: правильная установка
+    # Install zsh-syntax-highlighting
     if [ ! -d "$user_home/.zsh/zsh-syntax-highlighting" ]; then
         git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$user_home/.zsh/zsh-syntax-highlighting"
         log "zsh-syntax-highlighting plugin installed for $username"
+    else
+        # Update existing plugin
+        cd "$user_home/.zsh/zsh-syntax-highlighting" && git pull master
+        log "zsh-syntax-highlighting plugin updated for $username"
     fi
 
     # Install zsh-completions
     if [ ! -d "$user_home/.zsh/zsh-completions" ]; then
         git clone https://github.com/zsh-users/zsh-completions "$user_home/.zsh/zsh-completions"
         log "zsh-completions plugin installed for $username"
+    else
+        # Update existing plugin
+        cd "$user_home/.zsh/zsh-completions" && git pull master
+        log "zsh-completions plugin updated for $username"
     fi
 
     # Create .zshrc with FIXED configuration
@@ -397,27 +409,32 @@ bindkey '^[[3~' delete-char
 bindkey '^[[H' beginning-of-line
 bindkey '^[[F' end-of-line
 
-# FIXED: Plugin configuration - set options BEFORE sourcing plugins
-ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=8'
-ZSH_AUTOSUGGEST_STRATEGY=(history completion)
-ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
-ZSH_AUTOSUGGEST_USE_ASYNC=true
-
-# Load zsh-autosuggestions (must be loaded before syntax-highlighting)
+# Load zsh-autosuggestions first
 if [[ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
     source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
-    # FIXED: Proper key bindings for autosuggestions
-    bindkey ' ' autosuggest-accept || true
-    bindkey '^ ' autosuggest-accept || true
-    bindkey '^[^M' autosuggest-execute || true
+    # Check if plugin loaded successfully
+    if typeset -f _zsh_autosuggest_widget_accept >/dev/null; then
+        # Plugin configuration
+        ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=8'
+        ZSH_AUTOSUGGEST_STRATEGY=(history completion)
+        ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
+        ZSH_AUTOSUGGEST_USE_ASYNC=true
+        
+        # Key bindings for autosuggestions
+        bindkey '^ ' autosuggest-accept
+        bindkey '^[^M' autosuggest-execute
+    else
+        echo "Warning: zsh-autosuggestions plugin failed to load properly"
+    fi
+else
+    echo "Warning: zsh-autosuggestions plugin not found"
 fi
 
-# Load zsh-syntax-highlighting last to avoid clobbering suggestions
+# Load zsh-syntax-highlighting last
 if [[ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
     source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+    ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern)
 fi
-
-ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern)
 
 # Environment variables - FIXED: Use system locale
 export EDITOR='vim'
