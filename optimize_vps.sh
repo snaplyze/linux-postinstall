@@ -6,7 +6,7 @@
 # Features: Auto RAM detection, XanMod kernel, user creation, SSH hardening
 # Author: Auto-generated
 # Date: 2025-11-09
-# Fixed: Zsh autosuggestions errors
+# Fixed: Zsh autosuggestions errors and locale issues
 ################################################################################
 
 set -e
@@ -157,13 +157,16 @@ echo ""
 read -p "Press Enter once you've verified SSH access works..."
 
 ################################################################################
-# 1.5. System Localization Settings
+# 1.5. System Localization Settings - FIXED VERSION
 ################################################################################
 log "Step 1.5: Configuring system localization..."
 
 echo ""
 info "Setting up system locale, hostname, and timezone..."
 echo ""
+
+# FIXED: Ensure locales are available before configuration
+apt-get install -y locales
 
 # Locale selection
 echo "Select system locale:"
@@ -195,22 +198,26 @@ case $LOCALE_CHOICE in
         ;;
 esac
 
-# Generate locales
+# FIXED: Proper locale generation
 log "Generating locales..."
 for locale in $LOCALE_TO_GENERATE; do
-    if ! locale -a | grep -qi "^${locale%.*}"; then
-        # Add locale to locale.gen if not present
-        if ! grep -q "^${locale}" /etc/locale.gen 2>/dev/null; then
-            echo "${locale} UTF-8" >> /etc/locale.gen
-        fi
-        # Uncomment locale in locale.gen
-        sed -i "s/^# *${locale}/${locale}/" /etc/locale.gen 2>/dev/null || true
+    # Check if locale is already in locale.gen
+    if ! grep -q "^#\?$locale " /etc/locale.gen; then
+        echo "$locale UTF-8" >> /etc/locale.gen
     fi
+    # Uncomment the locale
+    sed -i "s/^#\($locale UTF-8\)/\1/" /etc/locale.gen
 done
 
-# Generate and update locales
+# Generate locales
 locale-gen
-update-locale LANG=$DEFAULT_LOCALE
+
+# FIXED: Proper locale configuration
+update-locale LANG=$DEFAULT_LOCALE LC_ALL=$DEFAULT_LOCALE
+
+# Set immediate locale for current session
+export LANG=$DEFAULT_LOCALE
+export LC_ALL=$DEFAULT_LOCALE
 
 log "Default locale set to: $DEFAULT_LOCALE"
 
@@ -274,7 +281,7 @@ info "  Timezone: $(timedatectl show --property=Timezone --value)"
 echo ""
 
 ################################################################################
-# 1.7. Zsh and Starship Installation
+# 1.7. Zsh and Starship Installation - FIXED VERSION
 ################################################################################
 log "Step 1.7: Installing and configuring Zsh + Starship..."
 
@@ -285,11 +292,11 @@ echo ""
 # Install Zsh and dependencies
 apt-get install -y zsh git curl
 
-# Install Starship prompt (universal, works everywhere)
+# Install Starship prompt
 curl -sS https://starship.rs/install.sh | sh -s -- -y
 log "Starship prompt installed"
 
-# Function to setup Zsh for a user
+# Function to setup Zsh for a user - FIXED VERSION
 setup_zsh_for_user() {
     local username=$1
     local user_home=$(eval echo ~$username)
@@ -299,13 +306,13 @@ setup_zsh_for_user() {
     # Create plugins directory
     mkdir -p "$user_home/.zsh"
 
-    # Install zsh-autosuggestions
+    # Install zsh-autosuggestions - FIXED: правильная установка
     if [ ! -d "$user_home/.zsh/zsh-autosuggestions" ]; then
         git clone https://github.com/zsh-users/zsh-autosuggestions "$user_home/.zsh/zsh-autosuggestions"
         log "zsh-autosuggestions plugin installed for $username"
     fi
 
-    # Install zsh-syntax-highlighting
+    # Install zsh-syntax-highlighting - FIXED: правильная установка
     if [ ! -d "$user_home/.zsh/zsh-syntax-highlighting" ]; then
         git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$user_home/.zsh/zsh-syntax-highlighting"
         log "zsh-syntax-highlighting plugin installed for $username"
@@ -317,94 +324,90 @@ setup_zsh_for_user() {
         log "zsh-completions plugin installed for $username"
     fi
 
-    # Create .zshrc with optimal configuration
+    # Create .zshrc with FIXED configuration
     cat > "$user_home/.zshrc" <<'ZSHRC'
 # History configuration
 HISTSIZE=50000
 SAVEHIST=50000
 HISTFILE=~/.zsh_history
-setopt EXTENDED_HISTORY          # Write the history file in the ':start:elapsed;command' format
-setopt INC_APPEND_HISTORY        # Write to the history file immediately, not when the shell exits
-setopt SHARE_HISTORY             # Share history between all sessions
-setopt HIST_IGNORE_DUPS          # Do not record an event that was just recorded again
-setopt HIST_IGNORE_ALL_DUPS      # Delete an old recorded event if a new event is a duplicate
-setopt HIST_IGNORE_SPACE         # Do not record an event starting with a space
-setopt HIST_SAVE_NO_DUPS         # Do not write a duplicate event to the history file
-setopt HIST_VERIFY               # Do not execute immediately upon history expansion
-setopt APPEND_HISTORY            # Append to history file (important!)
+setopt EXTENDED_HISTORY
+setopt INC_APPEND_HISTORY
+setopt SHARE_HISTORY
+setopt HIST_IGNORE_DUPS
+setopt HIST_IGNORE_ALL_DUPS
+setopt HIST_IGNORE_SPACE
+setopt HIST_SAVE_NO_DUPS
+setopt HIST_VERIFY
+setopt APPEND_HISTORY
 
 # Directory navigation
-setopt AUTO_CD                   # Auto cd when entering just a path
-setopt AUTO_PUSHD                # Push the current directory visited on the stack
-setopt PUSHD_IGNORE_DUPS         # Do not store duplicates in the stack
-setopt PUSHD_SILENT              # Do not print the directory stack after pushd or popd
+setopt AUTO_CD
+setopt AUTO_PUSHD
+setopt PUSHD_IGNORE_DUPS
+setopt PUSHD_SILENT
 
-# Completion settings
-# Load zsh-completions BEFORE compinit
+# Completion settings - FIXED: load completions first
 fpath=(~/.zsh/zsh-completions/src $fpath)
 
 autoload -Uz compinit
-compinit -d ~/.zcompdump
+if [[ -n ${ZDOTDIR}/.zcompdump(#qN.mh+24) ]]; then
+    compinit
+else
+    compinit -C
+fi
 
 # Completion options
-setopt COMPLETE_IN_WORD          # Complete from both ends of a word
-setopt ALWAYS_TO_END             # Move cursor to the end of a completed word
-setopt PATH_DIRS                 # Perform path search even on command names with slashes
-setopt AUTO_MENU                 # Show completion menu on a successive tab press
-setopt AUTO_LIST                 # Automatically list choices on ambiguous completion
-setopt AUTO_PARAM_SLASH          # If completed parameter is a directory, add a trailing slash
-setopt MENU_COMPLETE             # Insert first match immediately on ambiguous completion
-unsetopt FLOW_CONTROL            # Disable start/stop characters in shell editor
+setopt COMPLETE_IN_WORD
+setopt ALWAYS_TO_END
+setopt PATH_DIRS
+setopt AUTO_MENU
+setopt AUTO_LIST
+setopt AUTO_PARAM_SLASH
+unsetopt FLOW_CONTROL
 
 # Case-insensitive completion
 zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|[._-]=* r:|=*' 'l:|=* r:|=*'
-
-# Colored completion (ls colors)
 zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
-
-# Better completion for kill command
 zstyle ':completion:*:*:kill:*:processes' list-colors '=(#b) #([0-9]#) ([0-9a-z-]#)*=01;34=0=01'
 zstyle ':completion:*:*:*:*:processes' command "ps -u $USER -o pid,user,comm -w -w"
-
-# Cache completions
 zstyle ':completion:*' use-cache on
 zstyle ':completion:*' cache-path ~/.zsh/cache
 
 # Bash compatibility
-setopt BASH_REMATCH              # Enable regex matching like bash
-setopt KSH_ARRAYS                # Array indexing from 0 (bash-like)
+setopt BASH_REMATCH
+setopt KSH_ARRAYS
 autoload -Uz bashcompinit && bashcompinit
 
-# Key bindings BEFORE loading plugins
+# Key bindings
 bindkey '^[[A' up-line-or-history
 bindkey '^[[B' down-line-or-history
 bindkey '^[[3~' delete-char
 bindkey '^[[H' beginning-of-line
 bindkey '^[[F' end-of-line
 
-# Plugin configuration (BEFORE loading plugins)
-# Autosuggestions configuration
-ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=240'
-ZSH_AUTOSUGGEST_STRATEGY=(history completion)
-ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
-ZSH_AUTOSUGGEST_USE_ASYNC=1
-ZSH_AUTOSUGGEST_MANUAL_REBIND=1
-
-# Syntax highlighting configuration
-ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern cursor)
-
-# Load plugins with checks
-# Order matters: autosuggestions first, syntax-highlighting last
+# FIXED: Load plugins in correct order
+# Load zsh-autosuggestions first
 if [[ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
     source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
+    # FIXED: Proper key bindings for autosuggestions
+    bindkey '^ ' autosuggest-accept
+    bindkey '^[^M' autosuggest-execute
 fi
 
+# Load zsh-syntax-highlighting last
 if [[ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
     source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 fi
 
-# Environment variables
-export LANG=en_US.UTF-8
+# FIXED: Plugin configuration AFTER loading
+ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=8'
+ZSH_AUTOSUGGEST_STRATEGY=(history completion)
+ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
+ZSH_AUTOSUGGEST_USE_ASYNC=true
+
+ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern)
+
+# Environment variables - FIXED: Use system locale
 export EDITOR='vim'
 export VISUAL='vim'
 export PAGER='less'
@@ -509,14 +512,9 @@ ZSHRC
     mkdir -p "$user_home/.config"
     cat > "$user_home/.config/starship.toml" <<'STARSHIP'
 # Starship configuration - Clean and universal
-
-# Timeout for commands executed by starship
 command_timeout = 1000
-
-# Add new line before prompt
 add_newline = true
 
-# Format configuration - simple and clean
 format = """
 $username\
 $hostname\
@@ -524,15 +522,9 @@ $directory\
 $git_branch\
 $git_status\
 $docker_context\
-$python\
-$nodejs\
-$golang\
-$rust\
-$java\
 $line_break\
 $character"""
 
-# Right prompt
 right_format = """$cmd_duration $time"""
 
 [username]
@@ -559,7 +551,7 @@ success_symbol = '[➜](bold green)'
 error_symbol = '[✗](bold red)'
 
 [git_branch]
-symbol = ''
+symbol = '🌱 '
 format = 'on [$symbol$branch]($style) '
 style = 'purple bold'
 
@@ -585,36 +577,36 @@ show_milliseconds = false
 [time]
 disabled = false
 format = '[$time](bold white)'
-time_format = '%T'
+time_format = '%H:%M:%S'
 
 [docker_context]
-symbol = 'docker'
+symbol = '🐳 '
 format = 'via [$symbol $context]($style) '
 style = 'blue bold'
 only_with_files = true
 
 [python]
-symbol = 'py'
+symbol = '🐍 '
 format = 'via [$symbol $version]($style) '
 style = 'yellow bold'
 
 [nodejs]
-symbol = 'node'
+symbol = '⬢ '
 format = 'via [$symbol $version]($style) '
 style = 'green bold'
 
 [golang]
-symbol = 'go'
+symbol = '🐹 '
 format = 'via [$symbol $version]($style) '
 style = 'cyan bold'
 
 [rust]
-symbol = 'rust'
+symbol = '🦀 '
 format = 'via [$symbol $version]($style) '
 style = 'red bold'
 
 [java]
-symbol = 'java'
+symbol = '☕ '
 format = 'via [$symbol $version]($style) '
 style = 'red bold'
 
@@ -631,8 +623,8 @@ STARSHIP
     # Create cache directory for completions
     mkdir -p "$user_home/.zsh/cache"
 
-    # Set correct ownership for all created files and directories
-    chown -R $username:$username "$user_home/.zshrc" "$user_home/.zsh" "$user_home/.config" "$user_home/.zcompdump" 2>/dev/null || true
+    # Set correct ownership
+    chown -R $username:$username "$user_home/.zshrc" "$user_home/.zsh" "$user_home/.config" 2>/dev/null || true
 
     # Set correct permissions
     chmod 644 "$user_home/.zshrc" 2>/dev/null || true
