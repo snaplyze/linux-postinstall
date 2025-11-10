@@ -5,8 +5,8 @@
 # Purpose: Complete VPS optimization with XanMod kernel support
 # Features: Auto RAM detection, XanMod kernel, user creation, SSH hardening
 # Author: Auto-generated
-# Date: 2025-11-09
-# Fixed: Zsh autosuggestions errors and locale issues
+# Date: 2025-11-11
+# Fixed: Removed duplicates, cleaned up code structure
 ################################################################################
 
 set -e
@@ -16,42 +16,23 @@ RED="\e[31m"
 GREEN="\e[32m"
 YELLOW="\e[33m"
 BLUE="\e[34m"
+CYAN="\e[36m"
 RESET="\e[0m"
-
-# Logging
-LOG_FILE="/var/log/vps_optimization.log"
-
-log() { echo -e "${GREEN}[INFO]${RESET} $*"; }
-info() { echo -e "${BLUE}[INFO]${RESET} $*"; }
-warn() { echo -e "${YELLOW}[WARN]${RESET} $*"; }
-error() { echo -e "${RED}[ERROR]${RESET} $*"; }
 
 # Default variables (can be overridden by environment)
 NEW_USER=${NEW_USER:-snaplyze}
 TIMEZONE=${TIMEZONE:-Europe/Berlin}
 LOCALE_TO_GENERATE=${LOCALE_TO_GENERATE:-"en_US.UTF-8"}
 DEFAULT_LOCALE=${DEFAULT_LOCALE:-"en_US.UTF-8"}
-QUIET_MODE=${QUIET_MODE:-true}  # Quiet mode by default for remote execution
+QUIET_MODE=${QUIET_MODE:-true}
 
-# Helper to ensure running as root
-require_root() {
-    if [[ $EUID -ne 0 ]]; then
-        error "This script must be run as root"
-        exit 1
-    fi
-}
-
-# Enhanced logging functions with quiet mode support
+# Logging functions with quiet mode support
 log() { 
-    if [[ "$QUIET_MODE" == "false" ]]; then
-        echo -e "${GREEN}[INFO]${RESET} $*"
-    fi
+    [[ "$QUIET_MODE" == "false" ]] && echo -e "${GREEN}[INFO]${RESET} $*"
 }
 
 info() { 
-    if [[ "$QUIET_MODE" == "false" ]]; then
-        echo -e "${BLUE}[INFO]${RESET} $*"
-    fi
+    [[ "$QUIET_MODE" == "false" ]] && echo -e "${BLUE}[INFO]${RESET} $*"
 }
 
 warn() { 
@@ -62,17 +43,11 @@ error() {
     echo -e "${RED}[ERROR]${RESET} $*" 
 }
 
-# Progress indicator for long operations
-show_progress() {
-    local message="$1"
-    local pid="$2"
-    if [[ "$QUIET_MODE" == "false" ]]; then
-        echo -n "${BLUE}[INFO]${RESET} $message... "
-        while kill -0 "$pid" 2>/dev/null; do
-            echo -n "."
-            sleep 1
-        done
-        echo " ${GREEN}✓${RESET}"
+# Helper to ensure running as root
+require_root() {
+    if [[ $EUID -ne 0 ]]; then
+        error "This script must be run as root"
+        exit 1
     fi
 }
 
@@ -80,20 +55,20 @@ require_root
 
 # Show help
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-    echo -e "${GREEN}VPS Optimization Script for Debian 13 (Trixie)${NC}"
+    echo -e "${GREEN}VPS Optimization Script for Debian 13 (Trixie)${RESET}"
     echo ""
-    echo -e "${CYAN}Usage:${NC}"
+    echo -e "${CYAN}Usage:${RESET}"
     echo -e "  $0 [OPTIONS]"
     echo ""
-    echo -e "${CYAN}Options:${NC}"
-    echo -e "  ${GREEN}-v, --verbose${NC}   Show detailed output (default is quiet)"
-    echo -e "  ${GREEN}-q, --quiet${NC}     Run in quiet mode (minimal output)"
-    echo -e "  ${GREEN}-h, --help${NC}      Show this help message"
+    echo -e "${CYAN}Options:${RESET}"
+    echo -e "  ${GREEN}-v, --verbose${RESET}   Show detailed output (default is quiet)"
+    echo -e "  ${GREEN}-q, --quiet${RESET}     Run in quiet mode (minimal output)"
+    echo -e "  ${GREEN}-h, --help${RESET}      Show this help message"
     echo ""
-    echo -e "${CYAN}Remote Execution:${NC}"
+    echo -e "${CYAN}Remote Execution:${RESET}"
     echo -e "  bash <(curl -s https://raw.githubusercontent.com/snaplyze/linux-postinstall/main/optimize_vps.sh)"
     echo ""
-    echo -e "${CYAN}Examples:${NC}"
+    echo -e "${CYAN}Examples:${RESET}"
     echo -e "  sudo $0              # Interactive mode"
     echo -e "  sudo $0 --verbose    # Detailed output mode"
     echo -e "  sudo $0 --quiet      # Minimal output mode"
@@ -125,7 +100,6 @@ log "=== Starting VPS Optimization ==="
 ################################################################################
 log "Step 0: Detecting operating system..."
 
-# Detect OS
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     OS_NAME=$NAME
@@ -174,14 +148,9 @@ fi
 if [[ -n "$NEW_USER" && "$NEW_USER" != "snaplyze" ]]; then
     log "Using predefined username: $NEW_USER"
 else
-    if [[ "$QUIET_MODE" == "true" ]]; then
-        read -p "Enter new username [snaplyze]: " NEW_USER_INPUT
-        NEW_USER=${NEW_USER_INPUT:-snaplyze}
-        log "Using username: $NEW_USER"
-    else
-        read -p "Enter new username [snaplyze]: " NEW_USER_INPUT
-        NEW_USER=${NEW_USER_INPUT:-snaplyze}
-    fi
+    read -p "Enter new username [snaplyze]: " NEW_USER_INPUT
+    NEW_USER=${NEW_USER_INPUT:-snaplyze}
+    [[ "$QUIET_MODE" == "false" ]] && log "Using username: $NEW_USER"
 fi
 
 if [ -z "$NEW_USER" ]; then
@@ -193,10 +162,7 @@ fi
 if id "$NEW_USER" &>/dev/null; then
     warn "User $NEW_USER already exists. Skipping user creation..."
 else
-    # Create user
     adduser --gecos "" "$NEW_USER"
-
-    # Add to sudo group (docker group will be added later after Docker installation)
     usermod -aG sudo "$NEW_USER"
     log "User $NEW_USER created and added to sudo group"
 fi
@@ -221,9 +187,7 @@ USER_HOME=$(eval echo ~$NEW_USER)
 mkdir -p "$USER_HOME/.ssh"
 chmod 700 "$USER_HOME/.ssh"
 
-if [[ -n "$SSH_PUBLIC_KEY" ]]; then
-    log "Using predefined SSH key"
-else
+if [[ -z "$SSH_PUBLIC_KEY" ]]; then
     echo ""
     info "Please paste your SSH public key (the content of your id_rsa.pub or id_ed25519.pub):"
     info "If you don't have one, generate it on your local machine with: ssh-keygen -t ed25519"
@@ -236,7 +200,6 @@ if [ -z "$SSH_PUBLIC_KEY" ]; then
     exit 1
 fi
 
-# Add SSH key to authorized_keys
 echo "$SSH_PUBLIC_KEY" > "$USER_HOME/.ssh/authorized_keys"
 chmod 600 "$USER_HOME/.ssh/authorized_keys"
 chown -R $NEW_USER:$NEW_USER "$USER_HOME/.ssh"
@@ -249,46 +212,44 @@ echo ""
 read -p "Press Enter once you've verified SSH access works..."
 
 ################################################################################
-# 1.5. System Localization Settings - FIXED VERSION
+# 1.5. System Localization Settings
 ################################################################################
 log "Step 1.5: Configuring system localization..."
 
-echo ""
-info "Setting up system locale, hostname, and timezone..."
-echo ""
+if [[ "$QUIET_MODE" == "false" ]]; then
+    echo ""
+    info "Setting up system locale, hostname, and timezone..."
+    echo ""
 
-# Locale selection
-echo "Select system locale:"
-echo "1) en_US.UTF-8 (English)"
-echo "2) ru_RU.UTF-8 (Russian)"
-echo "3) Both (en_US.UTF-8 + ru_RU.UTF-8)"
-read -p "Enter choice [1-3]: " LOCALE_CHOICE
+    # Locale selection
+    echo "Select system locale:"
+    echo "1) en_US.UTF-8 (English)"
+    echo "2) ru_RU.UTF-8 (Russian)"
+    echo "3) Both (en_US.UTF-8 + ru_RU.UTF-8)"
+    read -p "Enter choice [1-3]: " LOCALE_CHOICE
 
-case $LOCALE_CHOICE in
-    1)
-        LOCALE_TO_GENERATE="en_US.UTF-8"
-        DEFAULT_LOCALE="en_US.UTF-8"
-        log "Selected locale: English (en_US.UTF-8)"
-        ;;
-    2)
-        LOCALE_TO_GENERATE="ru_RU.UTF-8"
-        DEFAULT_LOCALE="ru_RU.UTF-8"
-        log "Selected locale: Russian (ru_RU.UTF-8)"
-        ;;
-    3)
-        LOCALE_TO_GENERATE="en_US.UTF-8 ru_RU.UTF-8"
-        DEFAULT_LOCALE="en_US.UTF-8"
-        log "Selected locales: English + Russian"
-        ;;
-    *)
-        warn "Invalid choice. Using English (en_US.UTF-8) as default"
-        LOCALE_TO_GENERATE="en_US.UTF-8"
-        DEFAULT_LOCALE="en_US.UTF-8"
-        ;;
-esac
+    case $LOCALE_CHOICE in
+        1)
+            LOCALE_TO_GENERATE="en_US.UTF-8"
+            DEFAULT_LOCALE="en_US.UTF-8"
+            ;;
+        2)
+            LOCALE_TO_GENERATE="ru_RU.UTF-8"
+            DEFAULT_LOCALE="ru_RU.UTF-8"
+            ;;
+        3)
+            LOCALE_TO_GENERATE="en_US.UTF-8 ru_RU.UTF-8"
+            DEFAULT_LOCALE="en_US.UTF-8"
+            ;;
+        *)
+            warn "Invalid choice. Using English (en_US.UTF-8) as default"
+            LOCALE_TO_GENERATE="en_US.UTF-8"
+            DEFAULT_LOCALE="en_US.UTF-8"
+            ;;
+    esac
+fi
 
-# --- LOCALE FIX START ---
-# Ensure locales package is installed (useful on minimal images)
+# Ensure locales package is installed
 if ! dpkg -s locales >/dev/null 2>&1; then
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y locales
@@ -296,7 +257,6 @@ fi
 
 log "Generating locales..."
 for locale in $LOCALE_TO_GENERATE; do
-    # add or uncomment the locale in /etc/locale.gen
     if ! grep -q -E "^${locale}[[:space:]]+UTF-8" /etc/locale.gen 2>/dev/null; then
         echo "${locale} UTF-8" >> /etc/locale.gen
     else
@@ -304,183 +264,135 @@ for locale in $LOCALE_TO_GENERATE; do
     fi
 done
 
-# Generate locales
 locale-gen
 
-# Fallback: try localedef if locale not present in locale -a
+# Fallback: try localedef if locale not present
 for wanted in $LOCALE_TO_GENERATE; do
     if ! locale -a | grep -qi "^${wanted}$"; then
-        base="${wanted%%.*}"   # e.g. ru_RU
-        log "Locale $wanted not found in locale -a, trying localedef..."
+        base="${wanted%%.*}"
+        log "Locale $wanted not found, trying localedef..."
         localedef -i "$base" -f UTF-8 "$wanted" 2>/dev/null || warn "localedef for $wanted failed"
     fi
 done
 
-# Set system default locale
 update-locale LANG=$DEFAULT_LOCALE LC_ALL=$DEFAULT_LOCALE
-
-# Export for current session
 export LANG=$DEFAULT_LOCALE
 export LC_ALL=$DEFAULT_LOCALE
-
 log "Default locale set to: $DEFAULT_LOCALE"
-# --- LOCALE FIX END ---
 
 # Hostname configuration
-echo ""
-read -p "Enter new hostname (press Enter to keep current: $(hostname)): " NEW_HOSTNAME
+if [[ "$QUIET_MODE" == "false" ]]; then
+    echo ""
+    read -p "Enter new hostname (press Enter to keep current: $(hostname)): " NEW_HOSTNAME
 
-if [ -n "$NEW_HOSTNAME" ]; then
-    # Validate hostname
-    if [[ $NEW_HOSTNAME =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]]; then
-        OLD_HOSTNAME=$(hostname)
-
-        # Set new hostname
-        hostnamectl set-hostname "$NEW_HOSTNAME"
-
-        # Update /etc/hosts
-        sed -i "s/127.0.1.1.*/127.0.1.1\t${NEW_HOSTNAME}/" /etc/hosts
-
-        # Add entry if not exists
-        if ! grep -q "127.0.1.1" /etc/hosts; then
-            echo "127.0.1.1	${NEW_HOSTNAME}" >> /etc/hosts
+    if [ -n "$NEW_HOSTNAME" ]; then
+        if [[ $NEW_HOSTNAME =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]]; then
+            hostnamectl set-hostname "$NEW_HOSTNAME"
+            sed -i "s/127.0.1.1.*/127.0.1.1\t${NEW_HOSTNAME}/" /etc/hosts
+            if ! grep -q "127.0.1.1" /etc/hosts; then
+                echo "127.0.1.1	${NEW_HOSTNAME}" >> /etc/hosts
+            fi
+            log "Hostname changed to: $NEW_HOSTNAME"
+        else
+            warn "Invalid hostname format. Keeping current hostname: $(hostname)"
         fi
-
-        log "Hostname changed: $OLD_HOSTNAME -> $NEW_HOSTNAME"
     else
-        warn "Invalid hostname format. Keeping current hostname: $(hostname)"
+        log "Keeping current hostname: $(hostname)"
     fi
-else
-    log "Keeping current hostname: $(hostname)"
 fi
 
 # Timezone configuration
-echo ""
-info "Current timezone: $(timedatectl show --property=Timezone --value)"
-info "Examples: Europe/Moscow, America/New_York, Asia/Tokyo, UTC"
-echo ""
-read -p "Enter timezone (press Enter to keep current): " NEW_TIMEZONE
+if [[ "$QUIET_MODE" == "false" ]]; then
+    echo ""
+    info "Current timezone: $(timedatectl show --property=Timezone --value)"
+    info "Examples: Europe/Moscow, America/New_York, Asia/Tokyo, UTC"
+    echo ""
+    read -p "Enter timezone (press Enter to keep current): " NEW_TIMEZONE
 
-if [ -n "$NEW_TIMEZONE" ]; then
-    # Validate timezone
-    if timedatectl list-timezones | grep -q "^${NEW_TIMEZONE}$"; then
-        timedatectl set-timezone "$NEW_TIMEZONE"
-        log "Timezone set to: $NEW_TIMEZONE"
+    if [ -n "$NEW_TIMEZONE" ]; then
+        if timedatectl list-timezones | grep -q "^${NEW_TIMEZONE}$"; then
+            timedatectl set-timezone "$NEW_TIMEZONE"
+            log "Timezone set to: $NEW_TIMEZONE"
+        else
+            warn "Invalid timezone. Keeping current timezone."
+        fi
     else
-        warn "Invalid timezone. Keeping current timezone."
-        warn "Use 'timedatectl list-timezones' to see available timezones."
+        log "Keeping current timezone: $(timedatectl show --property=Timezone --value)"
     fi
-else
-    log "Keeping current timezone: $(timedatectl show --property=Timezone --value)"
 fi
 
-# Enable NTP
 timedatectl set-ntp true
 log "NTP synchronization enabled"
 
-echo ""
-info "Localization configured:"
-info "  Locale: $DEFAULT_LOCALE"
-info "  Hostname: $(hostname)"
-info "  Timezone: $(timedatectl show --property=Timezone --value)"
-echo ""
-
 ################################################################################
-# 1.7. Zsh and Starship Installation - FIXED VERSION
+# 1.7. Zsh and Starship Installation
 ################################################################################
 log "Step 1.7: Installing and configuring Zsh + Starship..."
 
-echo ""
-info "Installing Zsh and Starship for better shell experience..."
-echo ""
+[[ "$QUIET_MODE" == "false" ]] && info "Installing Zsh and Starship for better shell experience..."
 
-# Install Zsh and dependencies
 apt-get install -y zsh git curl locales
 
 # Install Starship prompt
 curl -sS https://starship.rs/install.sh | sh -s -- -y
 log "Starship prompt installed"
 
-# Function to setup Zsh for a user - FIXED VERSION
+# Function to setup Zsh for a user
 setup_zsh_for_user() {
     local username=$1
     local user_home=$(eval echo ~$username)
 
     log "Setting up Zsh for user: $username"
 
-    # Create plugins directory
     mkdir -p "$user_home/.zsh"
 
     # Install zsh-autosuggestions
     if [ ! -d "$user_home/.zsh/zsh-autosuggestions" ]; then
         git clone https://github.com/zsh-users/zsh-autosuggestions "$user_home/.zsh/zsh-autosuggestions"
-        log "zsh-autosuggestions plugin installed for $username"
     else
-        # Update existing plugin
         cd "$user_home/.zsh/zsh-autosuggestions" && git pull origin master
-        log "zsh-autosuggestions plugin updated for $username"
     fi
 
     # Install zsh-syntax-highlighting
     if [ ! -d "$user_home/.zsh/zsh-syntax-highlighting" ]; then
         git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$user_home/.zsh/zsh-syntax-highlighting"
-        log "zsh-syntax-highlighting plugin installed for $username"
     else
-        # Update existing plugin
         cd "$user_home/.zsh/zsh-syntax-highlighting" && git pull master
-        log "zsh-syntax-highlighting plugin updated for $username"
     fi
 
     # Install zsh-completions
     if [ ! -d "$user_home/.zsh/zsh-completions" ]; then
         git clone https://github.com/zsh-users/zsh-completions "$user_home/.zsh/zsh-completions"
-        log "zsh-completions plugin installed for $username"
     else
-        # Update existing plugin
         cd "$user_home/.zsh/zsh-completions" && git pull master
-        log "zsh-completions plugin updated for $username"
     fi
 
-    # Create .zshrc with FIXED configuration
+    # Create .zshrc
     cat > "$user_home/.zshrc" <<'ZSHRC'
 # History configuration
 HISTSIZE=50000
 SAVEHIST=50000
 HISTFILE=~/.zsh_history
-setopt EXTENDED_HISTORY
-setopt INC_APPEND_HISTORY
-setopt SHARE_HISTORY
-setopt HIST_IGNORE_DUPS
-setopt HIST_IGNORE_ALL_DUPS
-setopt HIST_IGNORE_SPACE
-setopt HIST_SAVE_NO_DUPS
-setopt HIST_VERIFY
-setopt APPEND_HISTORY
+setopt EXTENDED_HISTORY INC_APPEND_HISTORY SHARE_HISTORY
+setopt HIST_IGNORE_DUPS HIST_IGNORE_ALL_DUPS HIST_IGNORE_SPACE
+setopt HIST_SAVE_NO_DUPS HIST_VERIFY APPEND_HISTORY
 
 # Directory navigation
-setopt AUTO_CD
-setopt AUTO_PUSHD
-setopt PUSHD_IGNORE_DUPS
-setopt PUSHD_SILENT
+setopt AUTO_CD AUTO_PUSHD PUSHD_IGNORE_DUPS PUSHD_SILENT
 
 # Load zsh-autosuggestions FIRST
 if [[ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
     source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
-    
-    # Configure autosuggestions
     ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=8'
     ZSH_AUTOSUGGEST_STRATEGY=(history completion)
     ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
     ZSH_AUTOSUGGEST_USE_ASYNC=true
-    
-    # Key bindings for autosuggestions
     bindkey '^ ' autosuggest-accept
     bindkey '^[^M' autosuggest-execute
 fi
 
 # Completion settings
 fpath=(~/.zsh/zsh-completions/src $fpath)
-
 autoload -Uz compinit
 if [[ -n ${ZDOTDIR}/.zcompdump(#qN.mh+24) ]]; then
     compinit
@@ -488,16 +400,9 @@ else
     compinit -C
 fi
 
-# Completion options
-setopt COMPLETE_IN_WORD
-setopt ALWAYS_TO_END
-setopt PATH_DIRS
-setopt AUTO_MENU
-setopt AUTO_LIST
-setopt AUTO_PARAM_SLASH
+setopt COMPLETE_IN_WORD ALWAYS_TO_END PATH_DIRS AUTO_MENU AUTO_LIST AUTO_PARAM_SLASH
 unsetopt FLOW_CONTROL
 
-# Case-insensitive completion
 zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|[._-]=* r:|=*' 'l:|=* r:|=*'
 zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
 zstyle ':completion:*:*:kill:*:processes' list-colors '=(#b) #([0-9]#) ([0-9a-z-]#)*=01;34=0=01'
@@ -506,8 +411,7 @@ zstyle ':completion:*' use-cache on
 zstyle ':completion:*' cache-path ~/.zsh/cache
 
 # Bash compatibility
-setopt BASH_REMATCH
-setopt KSH_ARRAYS
+setopt BASH_REMATCH KSH_ARRAYS
 autoload -Uz bashcompinit && bashcompinit
 
 # Key bindings
@@ -517,7 +421,7 @@ bindkey '^[[3~' delete-char
 bindkey '^[[H' beginning-of-line
 bindkey '^[[F' end-of-line
 
-# Environment variables - FIXED: Use system locale
+# Environment variables
 export EDITOR='vim'
 export VISUAL='vim'
 export PAGER='less'
@@ -539,21 +443,16 @@ alias dprune='docker system prune -af'
 # Git aliases
 alias g='git'
 alias gs='git status'
-alias gst='git status'
 alias ga='git add'
 alias gaa='git add --all'
 alias gc='git commit'
 alias gcm='git commit -m'
-alias gca='git commit -a'
-alias gcam='git commit -am'
 alias gp='git pull'
 alias gP='git push'
-alias gpo='git push origin'
 alias gl='git log --oneline --graph --decorate'
 alias gd='git diff'
 alias gb='git branch'
 alias gco='git checkout'
-alias gcb='git checkout -b'
 
 # System aliases
 alias ll='ls -alFh'
@@ -561,25 +460,18 @@ alias la='ls -A'
 alias l='ls -CF'
 alias cls='clear'
 alias c='clear'
-alias h='history'
 alias ..='cd ..'
 alias ...='cd ../..'
-alias ....='cd ../../..'
-alias .....='cd ../../../..'
 
 # System monitoring
 alias meminfo='free -h'
 alias cpuinfo='lscpu'
 alias diskinfo='df -h'
 alias ports='netstat -tulanp'
-alias psa='ps aux'
-alias psg='ps aux | grep'
 
 # Package management
 alias update='sudo apt update && sudo apt upgrade -y'
 alias install='sudo apt install'
-alias remove='sudo apt remove'
-alias search='apt search'
 alias autoremove='sudo apt autoremove -y'
 
 # Safety aliases
@@ -589,9 +481,7 @@ alias mv='mv -i'
 alias mkdir='mkdir -pv'
 
 # Useful functions
-mkcd() {
-    mkdir -p "$1" && cd "$1"
-}
+mkcd() { mkdir -p "$1" && cd "$1"; }
 
 extract() {
     if [ -f $1 ] ; then
@@ -607,7 +497,7 @@ extract() {
             *.zip)       unzip $1       ;;
             *.Z)         uncompress $1  ;;
             *.7z)        7z x $1        ;;
-            *)           echo "'$1' cannot be extracted via extract()" ;;
+            *)           echo "'$1' cannot be extracted" ;;
         esac
     else
         echo "'$1' is not a valid file"
@@ -617,7 +507,7 @@ extract() {
 # Initialize Starship prompt
 eval "$(starship init zsh)"
 
-# CRITICAL: Load zsh-syntax-highlighting LAST (after everything else)
+# Load zsh-syntax-highlighting LAST
 if [[ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
     source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
     ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern)
@@ -627,7 +517,6 @@ ZSHRC
     # Create Starship config
     mkdir -p "$user_home/.config"
     cat > "$user_home/.config/starship.toml" <<'STARSHIP'
-# Starship configuration - Clean and universal
 command_timeout = 1000
 add_newline = true
 
@@ -674,21 +563,10 @@ style = 'purple bold'
 [git_status]
 format = '([\[$all_status$ahead_behind\]]($style) )'
 style = 'red bold'
-conflicted = '='
-ahead = '⇡${count}'
-behind = '⇣${count}'
-diverged = '⇕${ahead_count}⇣${behind_count}'
-untracked = '?${count}'
-stashed = '\$${count}'
-modified = '!${count}'
-staged = '+${count}'
-renamed = '»${count}'
-deleted = 'x${count}'
 
 [cmd_duration]
 min_time = 500
 format = 'took [$duration](bold yellow)'
-show_milliseconds = false
 
 [time]
 disabled = false
@@ -700,117 +578,44 @@ symbol = '🐳 '
 format = 'via [$symbol $context]($style) '
 style = 'blue bold'
 only_with_files = true
-
-[python]
-symbol = '🐍 '
-format = 'via [$symbol $version]($style) '
-style = 'yellow bold'
-
-[nodejs]
-symbol = '⬢ '
-format = 'via [$symbol $version]($style) '
-style = 'green bold'
-
-[golang]
-symbol = '🐹 '
-format = 'via [$symbol $version]($style) '
-style = 'cyan bold'
-
-[rust]
-symbol = '🦀 '
-format = 'via [$symbol $version]($style) '
-style = 'red bold'
-
-[java]
-symbol = '☕ '
-format = 'via [$symbol $version]($style) '
-style = 'red bold'
-
-[package]
-disabled = true
-
-[memory_usage]
-disabled = true
-
-[battery]
-disabled = true
 STARSHIP
 
-    # Create cache directory for completions
     mkdir -p "$user_home/.zsh/cache"
-
-    # Ensure plugin files are owned by the target user
-    chown -R "$username:$username" "$user_home/.zsh" || true
-
-    # Set correct ownership
-    chown -R $username:$username "$user_home/.zshrc" "$user_home/.zsh" "$user_home/.config" 2>/dev/null || true
-
-    # Set correct permissions
-    chmod 644 "$user_home/.zshrc" 2>/dev/null || true
-    chmod 644 "$user_home/.config/starship.toml" 2>/dev/null || true
-
-        # Set Zsh as the default shell for the user
-    if ! chsh -s $(which zsh) "$username" >/dev/null 2>&1; then
-        warn "Unable to change shell for $username — you may need to run 'chsh' manually"
-    fi
+    chown -R "$username:$username" "$user_home/.zsh" "$user_home/.zshrc" "$user_home/.config" 2>/dev/null || true
+    chmod 644 "$user_home/.zshrc" "$user_home/.config/starship.toml" 2>/dev/null || true
+    
+    chsh -s $(which zsh) "$username" >/dev/null 2>&1 || warn "Unable to change shell for $username"
 }
 
-# Setup Zsh for root
 setup_zsh_for_user root
-
-# Setup Zsh for new user
 setup_zsh_for_user $NEW_USER
 
-# Ensure zsh is available
-if ! command -v zsh &> /dev/null; then
-    error "Zsh installation failed!"
+if ! command -v zsh &> /dev/null || ! command -v starship &> /dev/null; then
+    error "Zsh or Starship installation failed!"
     exit 1
 fi
 
-# Ensure starship is available
-if ! command -v starship &> /dev/null; then
-    error "Starship installation failed!"
-    exit 1
-fi
-
-echo ""
-info "Zsh + Starship configured successfully!"
-info "Features enabled:"
-info "  • Starship prompt (universal, works everywhere)"
-info "  • Autosuggestions (fish-like suggestions)"
-info "  • Syntax highlighting"
-info "  • Git integration"
-info "  • Docker context display"
-info "  • Advanced completion system"
-info "  • 50+ useful aliases"
-info "  • Bash compatibility mode"
-echo ""
+log "Zsh + Starship configured successfully"
 
 ################################################################################
 # 2. Detect CPU Architecture and RAM
 ################################################################################
 log "Step 2: Detecting system specifications..."
 
-# Detect CPU architecture
 CPU_ARCH=$(uname -m)
 log "CPU Architecture: $CPU_ARCH"
 
-# Get total RAM in GB
 TOTAL_RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 TOTAL_RAM_GB=$(awk "BEGIN {printf \"%.2f\", $TOTAL_RAM_KB/1024/1024}")
 log "Total RAM: ${TOTAL_RAM_GB}GB"
 
 # Calculate swap size based on RAM
 if (( $(echo "$TOTAL_RAM_GB < 3" | bc -l) )); then
-    # Less than 3GB: swap = 2 * RAM
     SWAP_SIZE=$(awk "BEGIN {printf \"%.0f\", $TOTAL_RAM_GB * 2}")
     SWAPPINESS=60
-    log "RAM < 3GB: Creating ${SWAP_SIZE}GB swap (2x RAM)"
 else
-    # 3GB or more: swap = RAM / 2
     SWAP_SIZE=$(awk "BEGIN {printf \"%.0f\", $TOTAL_RAM_GB / 2}")
     SWAPPINESS=10
-    log "RAM >= 3GB: Creating ${SWAP_SIZE}GB swap (0.5x RAM)"
 fi
 
 ################################################################################
@@ -821,77 +626,37 @@ log "Step 3: Updating system and installing essential packages..."
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
 apt-get install -y \
-    curl \
-    wget \
-    git \
-    htop \
-    iotop \
-    sysstat \
-    net-tools \
-    ufw \
-    fail2ban \
-    unattended-upgrades \
-    apt-listchanges \
-    needrestart \
-    ncdu \
-    tree \
-    vim \
-    tmux \
-    zip \
-    unzip \
-    bc \
-    gnupg \
-    ca-certificates \
-    lsb-release
+    curl wget git htop iotop sysstat net-tools ufw fail2ban \
+    unattended-upgrades apt-listchanges needrestart ncdu tree \
+    vim tmux zip unzip bc gnupg ca-certificates lsb-release
 
 ################################################################################
 # 4. XanMod Kernel Installation
 ################################################################################
 log "Step 4: Checking XanMod kernel compatibility..."
 
-# XanMod supports x86_64 (amd64) architecture
 if [[ "$CPU_ARCH" == "x86_64" ]]; then
     log "CPU architecture is compatible with XanMod kernel"
 
-    # Check CPU for specific features
     if grep -q 'avx2' /proc/cpuinfo; then
         XANMOD_VARIANT="x64v3"
-        log "CPU supports AVX2 - using XanMod x64v3 variant"
     elif grep -q 'sse4_2' /proc/cpuinfo; then
         XANMOD_VARIANT="x64v2"
-        log "CPU supports SSE4.2 - using XanMod x64v2 variant"
     else
         XANMOD_VARIANT="x64v1"
-        log "Using XanMod x64v1 variant (generic)"
     fi
+    
+    log "Using XanMod $XANMOD_VARIANT variant"
 
-    info "Installing XanMod kernel..."
-
-    # Add XanMod repository
     wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor -o /usr/share/keyrings/xanmod-archive-keyring.gpg
-
     echo 'deb [signed-by=/usr/share/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' | tee /etc/apt/sources.list.d/xanmod-release.list
-
     apt-get update
-
-    # Install XanMod kernel based on variant
-    case $XANMOD_VARIANT in
-        "x64v3")
-            apt-get install -y linux-xanmod-x64v3
-            ;;
-        "x64v2")
-            apt-get install -y linux-xanmod-x64v2
-            ;;
-        *)
-            apt-get install -y linux-xanmod-x64v1
-            ;;
-    esac
+    apt-get install -y linux-xanmod-$XANMOD_VARIANT
 
     log "XanMod kernel installed successfully"
     XANMOD_INSTALLED=true
 else
-    warn "CPU architecture ($CPU_ARCH) is not compatible with XanMod kernel"
-    warn "Skipping XanMod installation. Continuing with default kernel..."
+    warn "CPU architecture ($CPU_ARCH) not compatible with XanMod. Skipping..."
     XANMOD_INSTALLED=false
 fi
 
@@ -900,54 +665,27 @@ fi
 ################################################################################
 log "Step 5: Installing Docker and Docker Compose..."
 
-# Remove old Docker versions if present
 for pkg in docker.io docker-doc docker-compose podman-docker containerd runc; do
     apt-get remove -y $pkg 2>/dev/null || true
 done
 
-# Install prerequisites
-apt-get install -y \
-    ca-certificates \
-    curl \
-    gnupg \
-    lsb-release
+apt-get install -y ca-certificates curl gnupg lsb-release
 
-# Add Docker's official GPG key
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/$ID/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 chmod a+r /etc/apt/keyrings/docker.gpg
 
-# Set up Docker repository
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$ID \
-  $VERSION_CODENAME stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$ID $VERSION_CODENAME stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-# Update package index
 apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-# Install Docker Engine, CLI, containerd, and Docker Compose plugin
-apt-get install -y \
-    docker-ce \
-    docker-ce-cli \
-    containerd.io \
-    docker-buildx-plugin \
-    docker-compose-plugin
-
-# Enable and start Docker service
 systemctl enable docker
 systemctl start docker
 
-# Add user to docker group
 usermod -aG docker "$DOCKER_USER"
 log "User $DOCKER_USER added to docker group"
 
-# Verify Docker installation
-DOCKER_VERSION=$(docker --version)
-COMPOSE_VERSION=$(docker compose version)
-log "Docker installed: $DOCKER_VERSION"
-log "Docker Compose installed: $COMPOSE_VERSION"
-
-# Configure Docker daemon for better performance
 cat > /etc/docker/daemon.json <<EOF
 {
   "log-driver": "json-file",
@@ -957,30 +695,22 @@ cat > /etc/docker/daemon.json <<EOF
   },
   "storage-driver": "overlay2",
   "default-address-pools": [
-    {
-      "base": "172.17.0.0/12",
-      "size": 24
-    }
+    {"base": "172.17.0.0/12", "size": 24}
   ]
 }
 EOF
 
-# Restart Docker to apply configuration
 systemctl restart docker
-
-log "Docker and Docker Compose installation complete"
+log "Docker and Docker Compose installed"
 
 ################################################################################
-# 6. Kernel Parameters Optimization (sysctl)
+# 6. Kernel Parameters Optimization
 ################################################################################
 log "Step 6: Optimizing kernel parameters..."
 
-# Backup original sysctl.conf
 cp /etc/sysctl.conf /etc/sysctl.conf.backup.$(date +%F) 2>/dev/null || true
 
 cat > /etc/sysctl.d/99-vps-optimization.conf <<EOF
-# VPS Optimization - Debian 13 Trixie
-
 # Network Performance
 net.core.rmem_max = 16777216
 net.core.wmem_max = 16777216
@@ -992,7 +722,7 @@ net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.ip_local_port_range = 10240 65535
 
-# TCP Congestion Control (BBR for better throughput)
+# TCP BBR
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 
@@ -1000,12 +730,12 @@ net.ipv4.tcp_congestion_control = bbr
 net.netfilter.nf_conntrack_max = 262144
 net.netfilter.nf_conntrack_tcp_timeout_established = 3600
 
-# File System Performance
+# File System
 fs.file-max = 2097152
 fs.inotify.max_user_watches = 524288
 fs.inotify.max_user_instances = 512
 
-# Virtual Memory (adjusted based on RAM)
+# Virtual Memory
 vm.swappiness = $SWAPPINESS
 vm.vfs_cache_pressure = 50
 vm.dirty_ratio = 15
@@ -1028,7 +758,7 @@ net.ipv4.conf.default.secure_redirects = 0
 net.ipv6.conf.all.accept_redirects = 0
 net.ipv6.conf.default.accept_redirects = 0
 
-# Kernel Performance
+# Kernel
 kernel.panic = 10
 kernel.panic_on_oops = 1
 EOF
@@ -1040,55 +770,42 @@ sysctl -p /etc/sysctl.d/99-vps-optimization.conf
 ################################################################################
 log "Step 7: Setting up swap file..."
 
-# Remove existing swap if present
 if swapon --show | grep -q "/swapfile"; then
-    log "Removing existing swap..."
     swapoff /swapfile
     rm -f /swapfile
     sed -i '/\/swapfile/d' /etc/fstab
 fi
 
-# Create new swap with calculated size
 log "Creating ${SWAP_SIZE}GB swap file..."
 fallocate -l ${SWAP_SIZE}G /swapfile
 chmod 600 /swapfile
 mkswap /swapfile
 swapon /swapfile
 
-# Add to fstab
 if ! grep -q "/swapfile" /etc/fstab; then
     echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-log "Swap file created and enabled (${SWAP_SIZE}GB, swappiness=$SWAPPINESS)"
+log "Swap configured: ${SWAP_SIZE}GB (swappiness=$SWAPPINESS)"
 
 ################################################################################
 # 8. Firewall Configuration (UFW)
 ################################################################################
-log "Step 8: Configuring firewall (UFW)..."
+log "Step 8: Configuring firewall..."
 
-# Reset UFW to default
 ufw --force reset
-
-# Default policies
 ufw default deny incoming
 ufw default allow outgoing
 
-# Allow SSH (check current SSH port)
 SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}')
-if [ -z "$SSH_PORT" ]; then
-    SSH_PORT=22
-fi
-ufw allow $SSH_PORT/tcp comment 'SSH'
+SSH_PORT=${SSH_PORT:-22}
 
-# Allow HTTP and HTTPS
+ufw allow $SSH_PORT/tcp comment 'SSH'
 ufw allow 80/tcp comment 'HTTP'
 ufw allow 443/tcp comment 'HTTPS'
-
-# Enable UFW
 ufw --force enable
 
-log "Firewall configured and enabled"
+log "Firewall configured"
 
 ################################################################################
 # 9. Fail2Ban Configuration
@@ -1103,8 +820,6 @@ cat > /etc/fail2ban/jail.local <<EOF
 bantime = 3600
 findtime = 600
 maxretry = 5
-destemail = root@localhost
-sendername = Fail2Ban
 
 [sshd]
 enabled = true
@@ -1122,7 +837,6 @@ systemctl restart fail2ban
 log "Step 10: Optimizing system limits..."
 
 cat > /etc/security/limits.d/99-vps-limits.conf <<EOF
-# VPS Limits Optimization
 * soft nofile 65535
 * hard nofile 65535
 * soft nproc 65535
@@ -1180,9 +894,7 @@ log "Step 13: Hardening SSH configuration..."
 
 cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup.$(date +%F) 2>/dev/null || true
 
-# Create hardening config
 cat > /etc/ssh/sshd_config.d/99-hardening.conf <<EOF
-# SSH Hardening - VPS Optimization
 PermitRootLogin no
 PasswordAuthentication no
 PubkeyAuthentication yes
@@ -1197,18 +909,14 @@ ClientAliveCountMax 2
 MaxAuthTries 3
 MaxSessions 10
 AllowTcpForwarding yes
-
-# Only allow specific user
 AllowUsers $NEW_USER
 EOF
 
-# Test SSH configuration
 if sshd -t; then
-    log "SSH configuration is valid"
     systemctl restart sshd
-    log "SSH service restarted with new configuration"
+    log "SSH hardened successfully"
 else
-    error "SSH configuration test failed! Reverting changes..."
+    error "SSH configuration invalid! Reverting..."
     rm -f /etc/ssh/sshd_config.d/99-hardening.conf
     exit 1
 fi
@@ -1218,7 +926,6 @@ fi
 ################################################################################
 log "Step 14: Optimizing tmpfs..."
 
-# Check if entries already exist to avoid duplicates
 if ! grep -q "tmpfs /tmp" /etc/fstab; then
     cat >> /etc/fstab <<EOF
 tmpfs /tmp tmpfs defaults,noatime,nosuid,nodev,noexec,mode=1777,size=1G 0 0
@@ -1231,13 +938,7 @@ fi
 ################################################################################
 log "Step 15: Disabling unnecessary services..."
 
-SERVICES_TO_DISABLE=(
-    "bluetooth.service"
-    "cups.service"
-    "avahi-daemon.service"
-)
-
-for service in "${SERVICES_TO_DISABLE[@]}"; do
+for service in bluetooth.service cups.service avahi-daemon.service; do
     if systemctl is-enabled "$service" 2>/dev/null; then
         systemctl disable "$service"
         systemctl stop "$service"
@@ -1251,7 +952,6 @@ done
 log "Step 16: Optimizing I/O scheduler..."
 
 cat > /etc/udev/rules.d/60-ioschedulers.conf <<EOF
-# Set deadline scheduler for SSDs and none for NVMe
 ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="mq-deadline"
 ACTION=="add|change", KERNEL=="nvme[0-9]n[0-9]", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="none"
 EOF
@@ -1259,43 +959,32 @@ EOF
 ################################################################################
 # 17. Create Monitoring Script
 ################################################################################
-log "Step 17: Creating monitoring script..."
+log "Step 17: Creating utility scripts..."
 
 cat > /usr/local/bin/vps-monitor.sh <<'SCRIPT'
 #!/bin/bash
-
 echo "=== VPS System Monitor ==="
 echo ""
 echo "=== CPU Usage ==="
 top -bn1 | head -n 5
-
 echo ""
 echo "=== Memory Usage ==="
 free -h
-
 echo ""
 echo "=== Disk Usage ==="
 df -h | grep -v tmpfs
-
 echo ""
 echo "=== Network Connections ==="
 ss -s
-
 echo ""
 echo "=== Load Average ==="
 uptime
-
 echo ""
 echo "=== Top 5 Processes by Memory ==="
 ps aux --sort=-%mem | head -6
-
 echo ""
 echo "=== Top 5 Processes by CPU ==="
 ps aux --sort=-%cpu | head -6
-
-echo ""
-echo "=== Swap Usage ==="
-swapon --show
 SCRIPT
 
 chmod +x /usr/local/bin/vps-monitor.sh
@@ -1303,37 +992,22 @@ chmod +x /usr/local/bin/vps-monitor.sh
 ################################################################################
 # 18. Create Cleanup Script
 ################################################################################
-log "Step 18: Creating cleanup script..."
 
 cat > /usr/local/bin/vps-cleanup.sh <<'SCRIPT'
 #!/bin/bash
-
 echo "Starting VPS cleanup..."
-
-# Clean package cache
 apt-get clean
 apt-get autoclean
 apt-get autoremove -y
-
-# Clean journal logs older than 7 days
 journalctl --vacuum-time=7d
-
-# Clean old kernels (keep current + 1)
 dpkg -l 'linux-*' | sed '/^ii/!d;/'"$(uname -r | sed "s/\(.*\)-\([^0-9]\+\)/\1/")"'/d;s/^[^ ]* [^ ]* \([^ ]*\).*/\1/;/[0-9]/!d' | head -n -1 | xargs apt-get -y purge 2>/dev/null || true
-
-# Clean temp files older than 7 days
 find /tmp -type f -atime +7 -delete 2>/dev/null || true
 find /var/tmp -type f -atime +7 -delete 2>/dev/null || true
-
-# Clean thumbnail cache if exists
-rm -rf ~/.cache/thumbnails/* 2>/dev/null || true
-
 echo "Cleanup completed!"
 SCRIPT
 
 chmod +x /usr/local/bin/vps-cleanup.sh
 
-# Create weekly cron job for cleanup
 cat > /etc/cron.weekly/vps-cleanup <<'EOF'
 #!/bin/bash
 /usr/local/bin/vps-cleanup.sh >> /var/log/vps-cleanup.log 2>&1
@@ -1344,22 +1018,16 @@ chmod +x /etc/cron.weekly/vps-cleanup
 ################################################################################
 # 19. Network Performance Test Script
 ################################################################################
-log "Step 19: Creating network performance test script..."
 
 cat > /usr/local/bin/network-test.sh <<'SCRIPT'
 #!/bin/bash
-
 echo "=== Network Performance Test ==="
 echo ""
-echo "Testing network speed with speedtest-cli..."
-
 if ! command -v speedtest-cli &> /dev/null; then
     echo "Installing speedtest-cli..."
     apt-get install -y speedtest-cli
 fi
-
 speedtest-cli
-
 echo ""
 echo "=== Network Statistics ==="
 netstat -s | head -20
@@ -1370,11 +1038,9 @@ chmod +x /usr/local/bin/network-test.sh
 ################################################################################
 # 20. System Information Script
 ################################################################################
-log "Step 20: Creating system information script..."
 
 cat > /usr/local/bin/vps-info.sh <<'SCRIPT'
 #!/bin/bash
-
 echo "=== VPS System Information ==="
 echo ""
 echo "Hostname: $(hostname)"
@@ -1406,14 +1072,14 @@ done
 echo ""
 
 echo "Public IP: $(curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "Unable to detect")"
-echo "TCP Congestion Control: $(sysctl -n net.ipv4.tcp_congestion_control)"
+echo "TCP Congestion: $(sysctl -n net.ipv4.tcp_congestion_control)"
 echo "Swappiness: $(sysctl -n vm.swappiness)"
 echo "Load Average: $(uptime | awk -F'load average:' '{print $2}' | xargs)"
 echo ""
 
 if command -v docker &> /dev/null; then
-    echo "Docker Version: $(docker --version 2>/dev/null | sed 's/Docker version //' | sed 's/, build.*//')"
-    echo "Docker Compose: $(docker compose version 2>/dev/null | sed 's/Docker Compose version //' | sed 's/, build.*//')"
+    echo "Docker: $(docker --version 2>/dev/null | sed 's/Docker version //' | sed 's/, build.*//')"
+    echo "Docker Compose: $(docker compose version 2>/dev/null | sed 's/Docker Compose version //')"
     echo "Docker Status: $(systemctl is-active docker 2>/dev/null)"
     echo "Running Containers: $(docker ps -q 2>/dev/null | wc -l)"
     echo ""
@@ -1421,7 +1087,6 @@ fi
 
 echo "Top 5 Processes by CPU:"
 ps aux --sort=-%cpu | head -6 | tail -5 | awk '{printf "  %-8s %5s%% %s\n", $1, $3, $11}'
-
 echo ""
 echo "Top 5 Processes by Memory:"
 ps aux --sort=-%mem | head -6 | tail -5 | awk '{printf "  %-8s %5s%% %s\n", $1, $4, $11}'
@@ -1433,149 +1098,77 @@ chmod +x /usr/local/bin/vps-info.sh
 # Final Summary
 ################################################################################
 echo ""
-log "=== VPS Optimization Complete ==="
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "${GREEN}           ✅ VPS OPTIMIZATION COMPLETE${RESET}"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""
-log "Summary of optimizations:"
-log "  ✓ OS detected: $OS_NAME $OS_VERSION ($OS_CODENAME)"
-log "  ✓ Locale: $DEFAULT_LOCALE"
-log "  ✓ Hostname: $(hostname)"
-log "  ✓ Timezone: $(timedatectl show --property=Timezone --value)"
-log "  ✓ Zsh + Starship installed for root and $NEW_USER"
-log "  ✓ Zsh plugins: autosuggestions, syntax highlighting, completions"
-log "  ✓ New user created: $NEW_USER (with sudo + docker access, passwordless)"
-log "  ✓ SSH keys configured for $NEW_USER"
-log "  ✓ System updated and essential packages installed"
-log "  ✓ Docker & Docker Compose installed (latest version)"
-log "  ✓ User $NEW_USER added to docker group (no sudo needed for docker)"
-log "  ✓ Kernel parameters optimized (BBR enabled)"
+echo -e "${GREEN}📋 SYSTEM CONFIGURATION${RESET}"
+echo -e "   ${CYAN}•${RESET} OS: $OS_NAME $OS_VERSION ($OS_CODENAME)"
+echo -e "   ${CYAN}•${RESET} Locale: $DEFAULT_LOCALE"
+echo -e "   ${CYAN}•${RESET} Hostname: $(hostname)"
+echo -e "   ${CYAN}•${RESET} Timezone: $(timedatectl show --property=Timezone --value)"
+echo ""
+echo -e "${GREEN}👤 USER & SHELL${RESET}"
+echo -e "   ${CYAN}•${RESET} User created: $NEW_USER (sudo + docker)"
+echo -e "   ${CYAN}•${RESET} Zsh + Starship installed"
+echo -e "   ${CYAN}•${RESET} Plugins: autosuggestions, syntax-highlighting, completions"
+echo -e "   ${CYAN}•${RESET} Passwordless sudo: enabled"
+echo ""
+echo -e "${GREEN}🔧 SYSTEM OPTIMIZATIONS${RESET}"
+echo -e "   ${CYAN}•${RESET} Kernel: BBR congestion control"
 if [ "$XANMOD_INSTALLED" = true ]; then
-    log "  ✓ XanMod kernel installed ($XANMOD_VARIANT)"
-else
-    log "  ✗ XanMod kernel not installed (incompatible architecture)"
+    echo -e "   ${CYAN}•${RESET} XanMod kernel: $XANMOD_VARIANT"
 fi
-log "  ✓ Swap configured (${SWAP_SIZE}GB, swappiness=$SWAPPINESS)"
-log "  ✓ Firewall (UFW) enabled with SSH, HTTP, HTTPS"
-log "  ✓ Fail2Ban configured for SSH protection"
-log "  ✓ System limits increased"
-log "  ✓ Automatic security updates enabled"
-log "  ✓ Journal logs limited to 500MB"
-log "  ✓ SSH hardened (root login disabled, only key auth)"
-log "  ✓ tmpfs optimized"
-log "  ✓ I/O scheduler optimized"
-log "  ✓ Unnecessary services disabled"
+echo -e "   ${CYAN}•${RESET} Swap: ${SWAP_SIZE}GB (swappiness=$SWAPPINESS)"
+echo -e "   ${CYAN}•${RESET} Docker & Docker Compose: latest"
+echo -e "   ${CYAN}•${RESET} Firewall: UFW (SSH, HTTP, HTTPS)"
+echo -e "   ${CYAN}•${RESET} Security: Fail2Ban + SSH hardening"
+echo -e "   ${CYAN}•${RESET} Updates: automatic security updates"
 echo ""
-log "Created utility scripts:"
-log "  • vps-monitor.sh   - System monitoring"
-log "  • vps-cleanup.sh   - System cleanup (runs weekly)"
-log "  • vps-info.sh      - System information"
-log "  • network-test.sh  - Network performance test"
+echo -e "${GREEN}🛠️ UTILITY SCRIPTS${RESET}"
+echo -e "   ${CYAN}•${RESET} vps-monitor.sh   - System monitoring"
+echo -e "   ${CYAN}•${RESET} vps-cleanup.sh   - Cleanup (runs weekly)"
+echo -e "   ${CYAN}•${RESET} vps-info.sh      - System information"
+echo -e "   ${CYAN}•${RESET} network-test.sh  - Network test"
 echo ""
-log "Security Configuration:"
-log "  • Root login: DISABLED"
-log "  • Password authentication: DISABLED"
-log "  • SSH key authentication: ENABLED (for $NEW_USER only)"
-log "  • Passwordless sudo: ENABLED (for $NEW_USER and root)"
-log "  • SSH port: $SSH_PORT"
+echo -e "${GREEN}🔒 SECURITY${RESET}"
+echo -e "   ${RED}•${RESET} Root login: ${RED}DISABLED${RESET}"
+echo -e "   ${RED}•${RESET} Password auth: ${RED}DISABLED${RESET}"
+echo -e "   ${GREEN}•${RESET} SSH key auth: ${GREEN}ENABLED${RESET}"
+echo -e "   ${CYAN}•${RESET} SSH port: $SSH_PORT"
+echo -e "   ${CYAN}•${RESET} Allowed users: $NEW_USER"
 echo ""
-warn "CRITICAL: Before disconnecting, verify SSH access:"
-warn "  1. Open a new terminal (don't close this one!)"
-warn "  2. Test login: ssh $NEW_USER@$(hostname -I | awk '{print $1}')"
-warn "  3. Test sudo: sudo -l (should work without password)"
-warn "  4. Only disconnect current session after successful test!"
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "${RED}⚠️  CRITICAL: VERIFY SSH ACCESS BEFORE DISCONNECTING${RESET}"
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "   ${YELLOW}1.${RESET} Open new terminal (don't close this!)"
+echo -e "   ${YELLOW}2.${RESET} Test: ${CYAN}ssh $NEW_USER@$(hostname -I | awk '{print $1}')${RESET}"
+echo -e "   ${YELLOW}3.${RESET} Test: ${CYAN}sudo -l${RESET} (no password required)"
+echo -e "   ${YELLOW}4.${RESET} Only disconnect after successful test"
 echo ""
-log "System Information:"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "${GREEN}                 📊 SYSTEM STATUS${RESET}"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 /usr/local/bin/vps-info.sh
 echo ""
-warn "A system reboot is REQUIRED to activate all changes"
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "${RED}🔄 REBOOT REQUIRED${RESET}"
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 if [ "$XANMOD_INSTALLED" = true ]; then
-    warn "Especially to boot into the new XanMod kernel"
+    echo -e "   ${CYAN}•${RESET} Boot into new XanMod kernel"
 fi
-warn ""
-warn "IMPORTANT: Docker group membership will be active after reboot!"
-warn "After reboot, login as $NEW_USER and test: docker ps (should work without sudo)"
+echo -e "   ${CYAN}•${RESET} Activate Docker group membership"
+echo -e "   ${CYAN}•${RESET} Apply all system optimizations"
 echo ""
-read -p "Do you want to reboot now? (y/N): " -n 1 -r
+read -p "Reboot now? (y/N): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    log "Rebooting system in 5 seconds... Press Ctrl+C to cancel"
+    echo -e "${GREEN}⏳ Rebooting in 5 seconds...${RESET}"
     sleep 5
     reboot
 else
-    log "Reboot skipped. Please reboot manually when ready with: sudo reboot"
-    echo ""
-    warn "After reboot, check kernel version with: uname -r"
+    echo -e "${YELLOW}⏭️  Reboot skipped. Run: ${CYAN}sudo reboot${RESET}"
     if [ "$XANMOD_INSTALLED" = true ]; then
-        warn "You should see 'xanmod' in the kernel version"
-    fi
-fi
-
-echo -e "   ${GREEN}✓${NC} Swap: ${CYAN}${SWAP_SIZE}GB (swappiness=$SWAPPINESS)${NC}"
-echo -e "   ${GREEN}✓${NC} Firewall: ${CYAN}UFW enabled (SSH, HTTP, HTTPS)${NC}"
-echo -e "   ${GREEN}✓${NC} Security: ${CYAN}Fail2Ban + SSH hardening${NC}"
-echo -e "   ${GREEN}✓${NC} Limits: ${CYAN}system limits increased${NC}"
-echo -e "   ${GREEN}✓${NC} Updates: ${CYAN}automatic security updates${NC}"
-echo -e "   ${GREEN}✓${NC} Logs: ${CYAN}journal limited to 500MB${NC}"
-echo -e "   ${GREEN}✓${NC} Services: ${CYAN}unnecessary services disabled${NC}"
-echo ""
-
-echo -e "${GREEN}🛠️  CREATED UTILITIES${NC}"
-echo -e "   ${CYAN}•${NC} vps-monitor.sh   - System monitoring"
-echo -e "   ${CYAN}•${NC} vps-cleanup.sh   - System cleanup (weekly)"
-echo -e "   ${CYAN}•${NC} vps-info.sh      - System information"
-echo -e "   ${CYAN}•${NC} network-test.sh  - Network performance test"
-echo ""
-
-echo -e "${GREEN}🔒 SECURITY CONFIGURATION${NC}"
-echo -e "   ${RED}•${NC} Root login: ${RED}DISABLED${NC}"
-echo -e "   ${RED}•${NC} Password auth: ${RED}DISABLED${NC}"
-echo -e "   ${GREEN}•${NC} SSH key auth: ${GREEN}ENABLED${NC} (${CYAN}$NEW_USER only${NC})"
-echo -e "   ${GREEN}•${NC} Passwordless sudo: ${GREEN}ENABLED${NC} (${CYAN}$NEW_USER + root${NC})"
-echo -e "   ${GREEN}•${NC} SSH port: ${CYAN}$SSH_PORT${NC}"
-echo ""
-
-echo -e "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
-echo -e "${RED}⚠️  CRITICAL: VERIFY SSH ACCESS BEFORE DISCONNECTING${NC}"
-echo -e "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
-echo -e "${YELLOW}   1.${NC} Open new terminal (don't close this one!)"
-echo -e "${YELLOW}   2.${NC} Test: ${CYAN}ssh $NEW_USER@$(hostname -I | awk '{print $1}')${NC}"
-echo -e "${YELLOW}   3.${NC} Test: ${CYAN}sudo -l${NC} (should work without password)"
-echo -e "${YELLOW}   4.${NC} Only disconnect after successful test!"
-echo ""
-
-echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}                    📊 FINAL SYSTEM STATUS${NC}"
-echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-/usr/local/bin/vps-info.sh
-echo ""
-
-echo -e "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
-echo -e "${RED}🔄 SYSTEM REBOOT REQUIRED${NC}"
-echo -e "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
-if [ "$XANMOD_INSTALLED" = true ]; then
-    echo -e "${YELLOW}•${NC} Especially to boot into new XanMod kernel"
-fi
-echo -e "${YELLOW}•${NC} Docker group membership will be active after reboot"
-echo -e "${YELLOW}•${NC} After reboot: ${CYAN}docker ps${NC} (should work without sudo)"
-echo ""
-
-echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-echo -ne "${GREEN}🔄 Reboot now? (y/N): ${NC}"
-read -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    REBOOT_NOW=true
-else
-    REBOOT_NOW=false
-fi
-
-if [[ "$REBOOT_NOW" == "true" ]]; then
-    echo -e "${GREEN}⏳ Rebooting in 5 seconds... Press Ctrl+C to cancel${NC}"
-    sleep 5
-    reboot
-else
-    echo -e "${YELLOW}⏭️  Reboot skipped. Run: ${CYAN}sudo reboot${NC} when ready"
-    echo ""
-    if [ "$XANMOD_INSTALLED" = true ]; then
-        echo -e "${YELLOW}💡 After reboot, check: ${CYAN}uname -r${NC} (should show 'xanmod')"
+        echo -e "${YELLOW}💡 After reboot, check: ${CYAN}uname -r${RESET}"
     fi
 fi
