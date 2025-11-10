@@ -370,7 +370,22 @@ setopt AUTO_PUSHD
 setopt PUSHD_IGNORE_DUPS
 setopt PUSHD_SILENT
 
-# Completion settings - FIXED: load completions first
+# CRITICAL: Load zsh-autosuggestions FIRST before compinit and other options
+if [[ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
+    source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
+    
+    # Configure autosuggestions immediately after loading
+    ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=8'
+    ZSH_AUTOSUGGEST_STRATEGY=(history completion)
+    ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
+    ZSH_AUTOSUGGEST_USE_ASYNC=true
+    
+    # Key bindings for autosuggestions
+    bindkey '^ ' autosuggest-accept
+    bindkey '^[^M' autosuggest-execute
+fi
+
+# Completion settings - load AFTER zsh-autosuggestions
 fpath=(~/.zsh/zsh-completions/src $fpath)
 
 autoload -Uz compinit
@@ -397,7 +412,7 @@ zstyle ':completion:*:*:*:*:processes' command "ps -u $USER -o pid,user,comm -w 
 zstyle ':completion:*' use-cache on
 zstyle ':completion:*' cache-path ~/.zsh/cache
 
-# Bash compatibility
+# Bash compatibility - set KSH_ARRAYS AFTER loading zsh-autosuggestions
 setopt BASH_REMATCH
 setopt KSH_ARRAYS
 autoload -Uz bashcompinit && bashcompinit
@@ -408,27 +423,6 @@ bindkey '^[[B' down-line-or-history
 bindkey '^[[3~' delete-char
 bindkey '^[[H' beginning-of-line
 bindkey '^[[F' end-of-line
-
-# Load zsh-autosuggestions first
-if [[ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
-    source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
-    # Check if plugin loaded successfully
-    if typeset -f _zsh_autosuggest_widget_accept >/dev/null; then
-        # Plugin configuration
-        ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=8'
-        ZSH_AUTOSUGGEST_STRATEGY=(history completion)
-        ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
-        ZSH_AUTOSUGGEST_USE_ASYNC=true
-        
-        # Key bindings for autosuggestions
-        bindkey '^ ' autosuggest-accept
-        bindkey '^[^M' autosuggest-execute
-    else
-        echo "Warning: zsh-autosuggestions plugin failed to load properly"
-    fi
-else
-    echo "Warning: zsh-autosuggestions plugin not found"
-fi
 
 # Load zsh-syntax-highlighting last
 if [[ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
@@ -1288,41 +1282,134 @@ log "Step 20: Creating system information script..."
 cat > /usr/local/bin/vps-info.sh <<'SCRIPT'
 #!/bin/bash
 
-echo "=== VPS System Information ==="
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║                    VPS SYSTEM INFORMATION                   ║${NC}"
+echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo "Hostname: $(hostname)"
-echo "OS: $(lsb_release -ds 2>/dev/null || cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)"
-echo "Kernel: $(uname -r)"
-echo "Uptime: $(uptime -p)"
+
+# System Info Section
+echo -e "${GREEN}🖥️  SYSTEM INFORMATION${NC}"
+echo -e "   Hostname: ${CYAN}$(hostname)${NC}"
+echo -e "   OS: ${CYAN}$(lsb_release -ds 2>/dev/null || cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)${NC}"
+echo -e "   Kernel: ${CYAN}$(uname -r)${NC}"
+echo -e "   Uptime: ${CYAN}$(uptime -p | sed 's/up //')${NC}"
 echo ""
-echo "CPU: $(lscpu | grep 'Model name' | cut -d':' -f2 | xargs)"
-echo "CPU Cores: $(nproc)"
-echo "Architecture: $(uname -m)"
+
+# Hardware Section
+echo -e "${GREEN}💻 HARDWARE${NC}"
+CPU_MODEL=$(lscpu | grep 'Model name' | cut -d':' -f2 | xargs)
+echo -e "   CPU: ${CYAN}${CPU_MODEL:-"Unknown"}${NC}"
+echo -e "   Cores: ${CYAN}$(nproc)${NC}"
+echo -e "   Architecture: ${CYAN}$(uname -m)${NC}"
 echo ""
-echo "Total RAM: $(free -h | awk '/^Mem:/ {print $2}')"
-echo "Used RAM: $(free -h | awk '/^Mem:/ {print $3}')"
-echo "Free RAM: $(free -h | awk '/^Mem:/ {print $4}')"
-echo ""
-echo "Swap Total: $(free -h | awk '/^Swap:/ {print $2}')"
-echo "Swap Used: $(free -h | awk '/^Swap:/ {print $3}')"
-echo ""
-echo "Disk Usage:"
-df -h / | tail -1
-echo ""
-PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "Unable to detect")
-echo "Public IP: $PUBLIC_IP"
-echo ""
-echo "Active Firewall Rules:"
-ufw status numbered
-echo ""
-echo "TCP Congestion Control: $(sysctl -n net.ipv4.tcp_congestion_control)"
-echo "Swappiness: $(sysctl -n vm.swappiness)"
-echo ""
-if command -v docker &> /dev/null; then
-    echo "Docker Version: $(docker --version 2>/dev/null || echo 'Not available')"
-    echo "Docker Compose: $(docker compose version 2>/dev/null || echo 'Not available')"
-    echo "Docker Status: $(systemctl is-active docker 2>/dev/null || echo 'Not running')"
+
+# Memory Section
+echo -e "${GREEN}🧠 MEMORY USAGE${NC}"
+TOTAL_RAM=$(free -h | awk '/^Mem:/ {print $2}')
+USED_RAM=$(free -h | awk '/^Mem:/ {print $3}')
+FREE_RAM=$(free -h | awk '/^Mem:/ {print $4}')
+RAM_PERCENT=$(free | awk '/^Mem:/ {printf "%.1f", $3/$2 * 100.0}')
+
+echo -e "   Total RAM: ${CYAN}${TOTAL_RAM}${NC}"
+echo -e "   Used RAM: ${YELLOW}${USED_RAM} (${RAM_PERCENT}%)${NC}"
+echo -e "   Free RAM: ${GREEN}${FREE_RAM}${NC}"
+
+# Swap Section
+TOTAL_SWAP=$(free -h | awk '/^Swap:/ {print $2}')
+USED_SWAP=$(free -h | awk '/^Swap:/ {print $3}')
+if [[ "$TOTAL_SWAP" != "0B" ]]; then
+    SWAP_PERCENT=$(free | awk '/^Swap:/ {if($2>0) printf "%.1f", $3/$2 * 100.0; else print "0"}')
+    echo -e "   Total Swap: ${CYAN}${TOTAL_SWAP}${NC}"
+    echo -e "   Used Swap: ${YELLOW}${USED_SWAP} (${SWAP_PERCENT}%)${NC}"
+else
+    echo -e "   Swap: ${YELLOW}Disabled${NC}"
 fi
+echo ""
+
+# Disk Section
+echo -e "${GREEN}💾 DISK USAGE${NC}"
+df -h | grep -E '^/dev/' | while read filesystem size used avail use_percent mount; do
+    if [[ "$use_percent" =~ ^[0-9]+$ ]]; then
+        if (( ${use_percent%?} > 80 )); then
+            COLOR="$RED"
+        elif (( ${use_percent%?} > 60 )); then
+            COLOR="$YELLOW"
+        else
+            COLOR="$GREEN"
+        fi
+    else
+        COLOR="$CYAN"
+    fi
+    echo -e "   ${filesystem}: ${COLOR}${used}/${size} (${use_percent})${NC} mounted on ${CYAN}${mount}${NC}"
+done
+echo ""
+
+# Network Section
+echo -e "${GREEN}🌐 NETWORK${NC}"
+PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "Unable to detect")
+echo -e "   Public IP: ${CYAN}${PUBLIC_IP}${NC}"
+echo -e "   TCP Congestion: ${CYAN}$(sysctl -n net.ipv4.tcp_congestion_control)${NC}"
+echo ""
+
+# Security Section
+echo -e "${GREEN}🔒 SECURITY${NC}"
+FW_STATUS=$(ufw status | head -1)
+echo -e "   Firewall: ${CYAN}${FW_STATUS}${NC}"
+echo -e "   SSH Port: ${CYAN}$(grep -E "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")${NC}"
+echo ""
+
+# Docker Section
+if command -v docker &> /dev/null; then
+    echo -e "${GREEN}🐳 DOCKER${NC}"
+    DOCKER_VERSION=$(docker --version 2>/dev/null | sed 's/Docker version //' | sed 's/, build.*//')
+    COMPOSE_VERSION=$(docker compose version 2>/dev/null | sed 's/Docker Compose version //' | sed 's/, build.*//')
+    DOCKER_STATUS=$(systemctl is-active docker 2>/dev/null)
+    
+    STATUS_COLOR="$GREEN"
+    [[ "$DOCKER_STATUS" != "active" ]] && STATUS_COLOR="$RED"
+    
+    echo -e "   Docker Version: ${CYAN}${DOCKER_VERSION}${NC}"
+    echo -e "   Compose Version: ${CYAN}${COMPOSE_VERSION}${NC}"
+    echo -e "   Docker Status: ${STATUS_COLOR}${DOCKER_STATUS}${NC}"
+    
+    # Container count
+    CONTAINER_COUNT=$(docker ps -q 2>/dev/null | wc -l)
+    echo -e "   Running Containers: ${CYAN}${CONTAINER_COUNT}${NC}"
+    echo ""
+fi
+
+# Performance Section
+echo -e "${GREEN}⚡ PERFORMANCE${NC}"
+echo -e "   Swappiness: ${CYAN}$(sysctl -n vm.swappiness)${NC}"
+LOAD_AVG=$(uptime | awk -F'load average:' '{print $2}' | xargs)
+echo -e "   Load Average: ${CYAN}${LOAD_AVG}${NC}"
+
+# Top processes
+echo ""
+echo -e "${GREEN}📊 TOP PROCESSES${NC}"
+echo -e "   Top 5 by CPU:"
+ps aux --sort=-%cpu | head -6 | tail -5 | awk '{printf "   %-8s %5s%% %s\n", $1, $3, $11}' | while read line; do
+    echo -e "   ${CYAN}${line}${NC}"
+done
+
+echo -e "   Top 5 by Memory:"
+ps aux --sort=-%mem | head -6 | tail -5 | awk '{printf "   %-8s %5s%% %s\n", $1, $4, $11}' | while read line; do
+    echo -e "   ${CYAN}${line}${NC}"
+done
+
+echo ""
+echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║                      END OF REPORT                        ║${NC}"
+echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
 SCRIPT
 
 chmod +x /usr/local/bin/vps-info.sh
@@ -1385,7 +1472,9 @@ warn "  3. Test sudo: sudo -l (should work without password)"
 warn "  4. Only disconnect current session after successful test!"
 warn "================================================================================"
 echo ""
-info "System Information:"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${GREEN}                    FINAL SYSTEM STATUS${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
 /usr/local/bin/vps-info.sh
 echo ""
 echo "================================================================================"
