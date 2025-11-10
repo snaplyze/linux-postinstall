@@ -23,9 +23,9 @@ readonly LOG_FILE="/var/log/vps_optimization.log"
 
 # Default variables (can be overridden by environment)
 NEW_USER=${NEW_USER:-snaplyze}
-TIMEZONE=${TIMEZONE:-Europe/Berlin}
-LOCALE_TO_GENERATE=${LOCALE_TO_GENERATE:-"en_US.UTF-8"}
-DEFAULT_LOCALE=${DEFAULT_LOCALE:-"en_US.UTF-8"}
+TIMEZONE=${TIMEZONE:-Europe/Moscow}
+LOCALE_TO_GENERATE=${LOCALE_TO_GENERATE:-"ru_RU.UTF-8"}
+DEFAULT_LOCALE=${DEFAULT_LOCALE:-"ru_RU.UTF-8"}
 QUIET_MODE=${QUIET_MODE:-true}
 
 # Force English locale for all operations
