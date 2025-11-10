@@ -406,10 +406,10 @@ ZSH_AUTOSUGGEST_USE_ASYNC=true
 # Load zsh-autosuggestions (must be loaded before syntax-highlighting)
 if [[ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
     source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
-    # Bind keys AFTER plugin is sourced (safe-fail with || true)
+    # FIXED: Proper key bindings for autosuggestions
     bindkey ' ' autosuggest-accept || true
-    # Optional: Ctrl+Space may conflict with tmux/terminal; included as fallback
     bindkey '^ ' autosuggest-accept || true
+    bindkey '^[^M' autosuggest-execute || true
 fi
 
 # Load zsh-syntax-highlighting last to avoid clobbering suggestions
