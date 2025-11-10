@@ -12,36 +12,35 @@
 set -e
 
 # Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+RED="\e[31m"
+GREEN="\e[32m"
+YELLOW="\e[33m"
+BLUE="\e[34m"
+RESET="\e[0m"
 
 # Logging
 LOG_FILE="/var/log/vps_optimization.log"
 
-log() {
-    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1" | tee -a "$LOG_FILE"
+log() { echo -e "${GREEN}[INFO]${RESET} $*"; }
+info() { echo -e "${BLUE}[INFO]${RESET} $*"; }
+warn() { echo -e "${YELLOW}[WARN]${RESET} $*"; }
+error() { echo -e "${RED}[ERROR]${RESET} $*"; }
+
+# Default variables (can be overridden by environment)
+NEW_USER=${NEW_USER:-snaplyze}
+TIMEZONE=${TIMEZONE:-Europe/Berlin}
+LOCALE_TO_GENERATE=${LOCALE_TO_GENERATE:-"en_US.UTF-8"}
+DEFAULT_LOCALE=${DEFAULT_LOCALE:-"en_US.UTF-8"}
+
+# Helper to ensure running as root
+require_root() {
+    if [[ $EUID -ne 0 ]]; then
+        error "This script must be run as root"
+        exit 1
+    fi
 }
 
-warn() {
-    echo -e "${YELLOW}[WARNING]${NC} $1" | tee -a "$LOG_FILE"
-}
-
-error() {
-    echo -e "${RED}[ERROR]${NC} $1" | tee -a "$LOG_FILE"
-}
-
-info() {
-    echo -e "${BLUE}[INFO]${NC} $1" | tee -a "$LOG_FILE"
-}
-
-# Check if running as root
-if [[ $EUID -ne 0 ]]; then
-   error "This script must be run as root (use sudo)"
-   exit 1
-fi
+require_root
 
 log "=== Starting VPS Optimization ==="
 
@@ -195,28 +194,44 @@ case $LOCALE_CHOICE in
         ;;
 esac
 
-# FIXED: Proper locale generation
+# --- LOCALE FIX START ---
+# Ensure locales package is installed (useful on minimal images)
+if ! dpkg -s locales >/dev/null 2>&1; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y locales
+fi
+
 log "Generating locales..."
 for locale in $LOCALE_TO_GENERATE; do
-    # Check if locale is already in locale.gen
-    if ! grep -q "^#\?$locale " /etc/locale.gen; then
-        echo "$locale UTF-8" >> /etc/locale.gen
+    # add or uncomment the locale in /etc/locale.gen
+    if ! grep -q -E "^${locale}[[:space:]]+UTF-8" /etc/locale.gen 2>/dev/null; then
+        echo "${locale} UTF-8" >> /etc/locale.gen
+    else
+        sed -i "s/^#\s*\(${locale} UTF-8\)/\1/" /etc/locale.gen || true
     fi
-    # Uncomment the locale
-    sed -i "s/^#\($locale UTF-8\)/\1/" /etc/locale.gen
 done
 
 # Generate locales
 locale-gen
 
-# FIXED: Proper locale configuration
+# Fallback: try localedef if locale not present in locale -a
+for wanted in $LOCALE_TO_GENERATE; do
+    if ! locale -a | grep -qi "^${wanted}$"; then
+        base="${wanted%%.*}"   # e.g. ru_RU
+        log "Locale $wanted not found in locale -a, trying localedef..."
+        localedef -i "$base" -f UTF-8 "$wanted" 2>/dev/null || warn "localedef for $wanted failed"
+    fi
+done
+
+# Set system default locale
 update-locale LANG=$DEFAULT_LOCALE LC_ALL=$DEFAULT_LOCALE
 
-# Set immediate locale for current session
+# Export for current session
 export LANG=$DEFAULT_LOCALE
 export LC_ALL=$DEFAULT_LOCALE
 
 log "Default locale set to: $DEFAULT_LOCALE"
+# --- LOCALE FIX END ---
 
 # Hostname configuration
 echo ""
@@ -287,7 +302,7 @@ info "Installing Zsh and Starship for better shell experience..."
 echo ""
 
 # Install Zsh and dependencies
-apt-get install -y zsh git curl
+apt-get install -y zsh git curl locales
 
 # Install Starship prompt
 curl -sS https://starship.rs/install.sh | sh -s -- -y
@@ -382,25 +397,25 @@ bindkey '^[[3~' delete-char
 bindkey '^[[H' beginning-of-line
 bindkey '^[[F' end-of-line
 
-# FIXED: Load plugins in correct order
-# Load zsh-autosuggestions first
-if [[ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
-    source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
-    # FIXED: Proper key bindings for autosuggestions
-    bindkey '^ ' autosuggest-accept
-    bindkey '^[^M' autosuggest-execute
-fi
-
-# Load zsh-syntax-highlighting last
-if [[ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
-    source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
-fi
-
-# FIXED: Plugin configuration AFTER loading
+# FIXED: Plugin configuration - set options BEFORE sourcing plugins
 ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=8'
 ZSH_AUTOSUGGEST_STRATEGY=(history completion)
 ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
 ZSH_AUTOSUGGEST_USE_ASYNC=true
+
+# Load zsh-autosuggestions (must be loaded before syntax-highlighting)
+if [[ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
+    source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
+    # Bind keys AFTER plugin is sourced (safe-fail with || true)
+    bindkey ' ' autosuggest-accept || true
+    # Optional: Ctrl+Space may conflict with tmux/terminal; included as fallback
+    bindkey '^ ' autosuggest-accept || true
+fi
+
+# Load zsh-syntax-highlighting last to avoid clobbering suggestions
+if [[ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
+    source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+fi
 
 ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern)
 
@@ -620,6 +635,9 @@ STARSHIP
     # Create cache directory for completions
     mkdir -p "$user_home/.zsh/cache"
 
+    # Ensure plugin files are owned by the target user
+    chown -R "$username:$username" "$user_home/.zsh" || true
+
     # Set correct ownership
     chown -R $username:$username "$user_home/.zshrc" "$user_home/.zsh" "$user_home/.config" 2>/dev/null || true
 
@@ -627,21 +645,10 @@ STARSHIP
     chmod 644 "$user_home/.zshrc" 2>/dev/null || true
     chmod 644 "$user_home/.config/starship.toml" 2>/dev/null || true
 
-    # Change default shell to Zsh
-    local zsh_path=$(which zsh)
-    if [ -z "$zsh_path" ]; then
-        error "Cannot find zsh binary"
-        return 1
+        # Set Zsh as the default shell for the user
+    if ! chsh -s $(which zsh) "$username" >/dev/null 2>&1; then
+        warn "Unable to change shell for $username — you may need to run 'chsh' manually"
     fi
-
-    # Ensure zsh is in /etc/shells
-    if ! grep -q "^$zsh_path$" /etc/shells; then
-        echo "$zsh_path" >> /etc/shells
-        log "Added $zsh_path to /etc/shells"
-    fi
-
-    chsh -s "$zsh_path" "$username"
-    log "Default shell changed to Zsh for $username"
 }
 
 # Setup Zsh for root
