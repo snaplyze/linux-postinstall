@@ -165,9 +165,6 @@ echo ""
 info "Setting up system locale, hostname, and timezone..."
 echo ""
 
-# FIXED: Ensure locales are available before configuration
-apt-get install -y locales
-
 # Locale selection
 echo "Select system locale:"
 echo "1) en_US.UTF-8 (English)"
