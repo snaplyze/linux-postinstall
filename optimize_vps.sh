@@ -94,9 +94,9 @@ if [[ "$1" == "--help" || "$1" == "-h" ]]; then
     echo -e "  bash <(curl -s https://raw.githubusercontent.com/snaplyze/linux-postinstall/main/optimize_vps.sh)"
     echo ""
     echo -e "${CYAN}Examples:${NC}"
-    echo -e "  sudo $0              # Quiet mode (default)"
+    echo -e "  sudo $0              # Interactive mode"
     echo -e "  sudo $0 --verbose    # Detailed output mode"
-    echo -e "  sudo $0 --quiet      # Explicit quiet mode"
+    echo -e "  sudo $0 --quiet      # Minimal output mode"
     exit 0
 fi
 
@@ -119,13 +119,6 @@ if [[ "$1" == "--quiet" || "$1" == "-q" ]]; then
 fi
 
 log "=== Starting VPS Optimization ==="
-if [[ "$REMOTE_EXECUTION" == "true" ]]; then
-    echo -e "${BLUE}[INFO]${RESET} Remote execution detected - running in quiet mode..."
-elif [[ "$QUIET_MODE" == "true" ]]; then
-    echo -e "${BLUE}[INFO]${RESET} Running in quiet mode - only showing progress..."
-else
-    echo -e "${BLUE}[INFO]${RESET} Running in verbose mode - showing all operations..."
-fi
 
 ################################################################################
 # 0. Detect OS Version
@@ -182,8 +175,9 @@ if [[ -n "$NEW_USER" && "$NEW_USER" != "snaplyze" ]]; then
     log "Using predefined username: $NEW_USER"
 else
     if [[ "$QUIET_MODE" == "true" ]]; then
-        NEW_USER="snaplyze"
-        log "Using default username: $NEW_USER (quiet mode)"
+        read -p "Enter new username [snaplyze]: " NEW_USER_INPUT
+        NEW_USER=${NEW_USER_INPUT:-snaplyze}
+        log "Using username: $NEW_USER"
     else
         read -p "Enter new username [snaplyze]: " NEW_USER_INPUT
         NEW_USER=${NEW_USER_INPUT:-snaplyze}
@@ -227,21 +221,14 @@ USER_HOME=$(eval echo ~$NEW_USER)
 mkdir -p "$USER_HOME/.ssh"
 chmod 700 "$USER_HOME/.ssh"
 
-if [[ "$QUIET_MODE" == "false" ]]; then
+if [[ -n "$SSH_PUBLIC_KEY" ]]; then
+    log "Using predefined SSH key"
+else
     echo ""
     info "Please paste your SSH public key (the content of your id_rsa.pub or id_ed25519.pub):"
     info "If you don't have one, generate it on your local machine with: ssh-keygen -t ed25519"
     echo ""
     read -p "SSH Public Key: " SSH_PUBLIC_KEY
-else
-    # In quiet mode, we need to handle SSH key differently
-    if [[ -n "$SSH_PUBLIC_KEY" ]]; then
-        log "Using predefined SSH key"
-    else
-        error "SSH public key required in quiet mode. Set SSH_PUBLIC_KEY environment variable."
-        error "Example: SSH_PUBLIC_KEY='ssh-rsa AAAA...' sudo bash <(curl -s ...)"
-        exit 1
-    fi
 fi
 
 if [ -z "$SSH_PUBLIC_KEY" ]; then
@@ -255,15 +242,11 @@ chmod 600 "$USER_HOME/.ssh/authorized_keys"
 chown -R $NEW_USER:$NEW_USER "$USER_HOME/.ssh"
 log "SSH key configured for $NEW_USER"
 
-if [[ "$QUIET_MODE" == "false" ]]; then
-    echo ""
-    warn "IMPORTANT: Please test SSH login with the new user in another terminal!"
-    warn "Command: ssh $NEW_USER@$(hostname -I | awk '{print $1}')"
-    echo ""
-    read -p "Press Enter once you've verified SSH access works..."
-else
-    log "Skipping SSH verification in quiet mode - please test manually after completion"
-fi
+echo ""
+warn "IMPORTANT: Please test SSH login with the new user in another terminal!"
+warn "Command: ssh $NEW_USER@$(hostname -I | awk '{print $1}')"
+echo ""
+read -p "Press Enter once you've verified SSH access works..."
 
 ################################################################################
 # 1.5. System Localization Settings - FIXED VERSION
@@ -275,16 +258,11 @@ info "Setting up system locale, hostname, and timezone..."
 echo ""
 
 # Locale selection
-if [[ "$QUIET_MODE" == "false" ]]; then
-    echo "Select system locale:"
-    echo "1) en_US.UTF-8 (English)"
-    echo "2) ru_RU.UTF-8 (Russian)"
-    echo "3) Both (en_US.UTF-8 + ru_RU.UTF-8)"
-    read -p "Enter choice [1-3]: " LOCALE_CHOICE
-else
-    LOCALE_CHOICE="1"  # Default to English in quiet mode
-    log "Using default locale: en_US.UTF-8 (quiet mode)"
-fi
+echo "Select system locale:"
+echo "1) en_US.UTF-8 (English)"
+echo "2) ru_RU.UTF-8 (Russian)"
+echo "3) Both (en_US.UTF-8 + ru_RU.UTF-8)"
+read -p "Enter choice [1-3]: " LOCALE_CHOICE
 
 case $LOCALE_CHOICE in
     1)
@@ -349,13 +327,8 @@ log "Default locale set to: $DEFAULT_LOCALE"
 # --- LOCALE FIX END ---
 
 # Hostname configuration
-if [[ "$QUIET_MODE" == "false" ]]; then
-    echo ""
-    read -p "Enter new hostname (press Enter to keep current: $(hostname)): " NEW_HOSTNAME
-else
-    NEW_HOSTNAME=""  # Keep current hostname in quiet mode
-    log "Keeping current hostname (quiet mode)"
-fi
+echo ""
+read -p "Enter new hostname (press Enter to keep current: $(hostname)): " NEW_HOSTNAME
 
 if [ -n "$NEW_HOSTNAME" ]; then
     # Validate hostname
@@ -382,16 +355,11 @@ else
 fi
 
 # Timezone configuration
-if [[ "$QUIET_MODE" == "false" ]]; then
-    echo ""
-    info "Current timezone: $(timedatectl show --property=Timezone --value)"
-    info "Examples: Europe/Moscow, America/New_York, Asia/Tokyo, UTC"
-    echo ""
-    read -p "Enter timezone (press Enter to keep current): " NEW_TIMEZONE
-else
-    NEW_TIMEZONE=""  # Keep current timezone in quiet mode
-    log "Keeping current timezone (quiet mode)"
-fi
+echo ""
+info "Current timezone: $(timedatectl show --property=Timezone --value)"
+info "Examples: Europe/Moscow, America/New_York, Asia/Tokyo, UTC"
+echo ""
+read -p "Enter timezone (press Enter to keep current): " NEW_TIMEZONE
 
 if [ -n "$NEW_TIMEZONE" ]; then
     # Validate timezone
@@ -850,20 +818,8 @@ fi
 ################################################################################
 log "Step 3: Updating system and installing essential packages..."
 
-if [[ "$QUIET_MODE" == "true" ]]; then
-    apt-get update >/dev/null 2>&1 &
-    UPDATE_PID=$!
-    show_progress "Updating package lists" $UPDATE_PID
-    wait $UPDATE_PID
-    
-    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y >/dev/null 2>&1 &
-    UPGRADE_PID=$!
-    show_progress "Upgrading system packages" $UPGRADE_PID
-    wait $UPGRADE_PID
-else
-    apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
-fi
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
 apt-get install -y \
     curl \
     wget \
@@ -1419,134 +1375,56 @@ log "Step 20: Creating system information script..."
 cat > /usr/local/bin/vps-info.sh <<'SCRIPT'
 #!/bin/bash
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
-
-echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║                    VPS SYSTEM INFORMATION                   ║${NC}"
-echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+echo "=== VPS System Information ==="
 echo ""
-
-# System Info Section
-echo -e "${GREEN}🖥️  SYSTEM INFORMATION${NC}"
-echo -e "   Hostname: ${CYAN}$(hostname)${NC}"
-echo -e "   OS: ${CYAN}$(lsb_release -ds 2>/dev/null || cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)${NC}"
-echo -e "   Kernel: ${CYAN}$(uname -r)${NC}"
-echo -e "   Uptime: ${CYAN}$(uptime -p | sed 's/up //')${NC}"
+echo "Hostname: $(hostname)"
+echo "OS: $(lsb_release -ds 2>/dev/null || cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)"
+echo "Kernel: $(uname -r)"
+echo "Uptime: $(uptime -p | sed 's/up //')"
 echo ""
-
-# Hardware Section
-echo -e "${GREEN}💻 HARDWARE${NC}"
-CPU_MODEL=$(lscpu | grep 'Model name' | cut -d':' -f2 | xargs)
-echo -e "   CPU: ${CYAN}${CPU_MODEL:-"Unknown"}${NC}"
-echo -e "   Cores: ${CYAN}$(nproc)${NC}"
-echo -e "   Architecture: ${CYAN}$(uname -m)${NC}"
+echo "CPU: $(lscpu | grep 'Model name' | cut -d':' -f2 | xargs || echo "Unknown")"
+echo "CPU Cores: $(nproc)"
+echo "Architecture: $(uname -m)"
 echo ""
+echo "Total RAM: $(free -h | awk '/^Mem:/ {print $2}')"
+echo "Used RAM: $(free -h | awk '/^Mem:/ {print $3}') ($(free | awk '/^Mem:/ {printf "%.1f", $3/$2 * 100.0}')%)"
+echo "Free RAM: $(free -h | awk '/^Mem:/ {print $4}')"
 
-# Memory Section
-echo -e "${GREEN}🧠 MEMORY USAGE${NC}"
-TOTAL_RAM=$(free -h | awk '/^Mem:/ {print $2}')
-USED_RAM=$(free -h | awk '/^Mem:/ {print $3}')
-FREE_RAM=$(free -h | awk '/^Mem:/ {print $4}')
-RAM_PERCENT=$(free | awk '/^Mem:/ {printf "%.1f", $3/$2 * 100.0}')
-
-echo -e "   Total RAM: ${CYAN}${TOTAL_RAM}${NC}"
-echo -e "   Used RAM: ${YELLOW}${USED_RAM} (${RAM_PERCENT}%)${NC}"
-echo -e "   Free RAM: ${GREEN}${FREE_RAM}${NC}"
-
-# Swap Section
 TOTAL_SWAP=$(free -h | awk '/^Swap:/ {print $2}')
-USED_SWAP=$(free -h | awk '/^Swap:/ {print $3}')
 if [[ "$TOTAL_SWAP" != "0B" ]]; then
-    SWAP_PERCENT=$(free | awk '/^Swap:/ {if($2>0) printf "%.1f", $3/$2 * 100.0; else print "0"}')
-    echo -e "   Total Swap: ${CYAN}${TOTAL_SWAP}${NC}"
-    echo -e "   Used Swap: ${YELLOW}${USED_SWAP} (${SWAP_PERCENT}%)${NC}"
+    echo "Total Swap: $TOTAL_SWAP"
+    echo "Used Swap: $(free -h | awk '/^Swap:/ {print $3}') ($(free | awk '/^Swap:/ {if($2>0) printf "%.1f", $3/$2 * 100.0; else print "0"}')%)"
 else
-    echo -e "   Swap: ${YELLOW}Disabled${NC}"
+    echo "Swap: Disabled"
 fi
 echo ""
 
-# Disk Section
-echo -e "${GREEN}💾 DISK USAGE${NC}"
+echo "Disk Usage:"
 df -h | grep -E '^/dev/' | while read filesystem size used avail use_percent mount; do
-    if [[ "$use_percent" =~ ^[0-9]+$ ]]; then
-        if (( ${use_percent%?} > 80 )); then
-            COLOR="$RED"
-        elif (( ${use_percent%?} > 60 )); then
-            COLOR="$YELLOW"
-        else
-            COLOR="$GREEN"
-        fi
-    else
-        COLOR="$CYAN"
-    fi
-    echo -e "   ${filesystem}: ${COLOR}${used}/${size} (${use_percent})${NC} mounted on ${CYAN}${mount}${NC}"
+    echo "  $filesystem: $used/$size ($use_percent) mounted on $mount"
 done
 echo ""
 
-# Network Section
-echo -e "${GREEN}🌐 NETWORK${NC}"
-PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "Unable to detect")
-echo -e "   Public IP: ${CYAN}${PUBLIC_IP}${NC}"
-echo -e "   TCP Congestion: ${CYAN}$(sysctl -n net.ipv4.tcp_congestion_control)${NC}"
+echo "Public IP: $(curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "Unable to detect")"
+echo "TCP Congestion Control: $(sysctl -n net.ipv4.tcp_congestion_control)"
+echo "Swappiness: $(sysctl -n vm.swappiness)"
+echo "Load Average: $(uptime | awk -F'load average:' '{print $2}' | xargs)"
 echo ""
 
-# Security Section
-echo -e "${GREEN}🔒 SECURITY${NC}"
-FW_STATUS=$(ufw status | head -1)
-echo -e "   Firewall: ${CYAN}${FW_STATUS}${NC}"
-echo -e "   SSH Port: ${CYAN}$(grep -E "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")${NC}"
-echo ""
-
-# Docker Section
 if command -v docker &> /dev/null; then
-    echo -e "${GREEN}🐳 DOCKER${NC}"
-    DOCKER_VERSION=$(docker --version 2>/dev/null | sed 's/Docker version //' | sed 's/, build.*//')
-    COMPOSE_VERSION=$(docker compose version 2>/dev/null | sed 's/Docker Compose version //' | sed 's/, build.*//')
-    DOCKER_STATUS=$(systemctl is-active docker 2>/dev/null)
-    
-    STATUS_COLOR="$GREEN"
-    [[ "$DOCKER_STATUS" != "active" ]] && STATUS_COLOR="$RED"
-    
-    echo -e "   Docker Version: ${CYAN}${DOCKER_VERSION}${NC}"
-    echo -e "   Compose Version: ${CYAN}${COMPOSE_VERSION}${NC}"
-    echo -e "   Docker Status: ${STATUS_COLOR}${DOCKER_STATUS}${NC}"
-    
-    # Container count
-    CONTAINER_COUNT=$(docker ps -q 2>/dev/null | wc -l)
-    echo -e "   Running Containers: ${CYAN}${CONTAINER_COUNT}${NC}"
+    echo "Docker Version: $(docker --version 2>/dev/null | sed 's/Docker version //' | sed 's/, build.*//')"
+    echo "Docker Compose: $(docker compose version 2>/dev/null | sed 's/Docker Compose version //' | sed 's/, build.*//')"
+    echo "Docker Status: $(systemctl is-active docker 2>/dev/null)"
+    echo "Running Containers: $(docker ps -q 2>/dev/null | wc -l)"
     echo ""
 fi
 
-# Performance Section
-echo -e "${GREEN}⚡ PERFORMANCE${NC}"
-echo -e "   Swappiness: ${CYAN}$(sysctl -n vm.swappiness)${NC}"
-LOAD_AVG=$(uptime | awk -F'load average:' '{print $2}' | xargs)
-echo -e "   Load Average: ${CYAN}${LOAD_AVG}${NC}"
-
-# Top processes
-echo ""
-echo -e "${GREEN}📊 TOP PROCESSES${NC}"
-echo -e "   Top 5 by CPU:"
-ps aux --sort=-%cpu | head -6 | tail -5 | awk '{printf "   %-8s %5s%% %s\n", $1, $3, $11}' | while read line; do
-    echo -e "   ${CYAN}${line}${NC}"
-done
-
-echo -e "   Top 5 by Memory:"
-ps aux --sort=-%mem | head -6 | tail -5 | awk '{printf "   %-8s %5s%% %s\n", $1, $4, $11}' | while read line; do
-    echo -e "   ${CYAN}${line}${NC}"
-done
+echo "Top 5 Processes by CPU:"
+ps aux --sort=-%cpu | head -6 | tail -5 | awk '{printf "  %-8s %5s%% %s\n", $1, $3, $11}'
 
 echo ""
-echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║                      END OF REPORT                        ║${NC}"
-echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
+echo "Top 5 Processes by Memory:"
+ps aux --sort=-%mem | head -6 | tail -5 | awk '{printf "  %-8s %5s%% %s\n", $1, $4, $11}'
 SCRIPT
 
 chmod +x /usr/local/bin/vps-info.sh
@@ -1555,28 +1433,80 @@ chmod +x /usr/local/bin/vps-info.sh
 # Final Summary
 ################################################################################
 echo ""
-echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}                  ✅ VPS OPTIMIZATION COMPLETE${NC}"
-echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+log "=== VPS Optimization Complete ==="
 echo ""
-
-echo -e "${GREEN}📋 OPTIMIZATION SUMMARY${NC}"
-echo -e "   ${GREEN}✓${NC} OS: ${CYAN}$OS_NAME $OS_VERSION ($OS_CODENAME)${NC}"
-echo -e "   ${GREEN}✓${NC} Locale: ${CYAN}$DEFAULT_LOCALE${NC}"
-echo -e "   ${GREEN}✓${NC} Hostname: ${CYAN}$(hostname)${NC}"
-echo -e "   ${GREEN}✓${NC} Timezone: ${CYAN}$(timedatectl show --property=Timezone --value)${NC}"
-echo -e "   ${GREEN}✓${NC} Shell: ${CYAN}Zsh + Starship (root + $NEW_USER)${NC}"
-echo -e "   ${GREEN}✓${NC} Plugins: ${CYAN}autosuggestions, syntax highlighting, completions${NC}"
-echo -e "   ${GREEN}✓${NC} User: ${CYAN}$NEW_USER (sudo + docker access, passwordless)${NC}"
-echo -e "   ${GREEN}✓${NC} SSH: ${CYAN}key authentication configured${NC}"
-echo -e "   ${GREEN}✓${NC} System: ${CYAN}updated + essential packages${NC}"
-echo -e "   ${GREEN}✓${NC} Docker: ${CYAN}latest version installed${NC}"
-echo -e "   ${GREEN}✓${NC} Kernel: ${CYAN}parameters optimized (BBR enabled)${NC}"
-
+log "Summary of optimizations:"
+log "  ✓ OS detected: $OS_NAME $OS_VERSION ($OS_CODENAME)"
+log "  ✓ Locale: $DEFAULT_LOCALE"
+log "  ✓ Hostname: $(hostname)"
+log "  ✓ Timezone: $(timedatectl show --property=Timezone --value)"
+log "  ✓ Zsh + Starship installed for root and $NEW_USER"
+log "  ✓ Zsh plugins: autosuggestions, syntax highlighting, completions"
+log "  ✓ New user created: $NEW_USER (with sudo + docker access, passwordless)"
+log "  ✓ SSH keys configured for $NEW_USER"
+log "  ✓ System updated and essential packages installed"
+log "  ✓ Docker & Docker Compose installed (latest version)"
+log "  ✓ User $NEW_USER added to docker group (no sudo needed for docker)"
+log "  ✓ Kernel parameters optimized (BBR enabled)"
 if [ "$XANMOD_INSTALLED" = true ]; then
-    echo -e "   ${GREEN}✓${NC} XanMod: ${CYAN}$XANMOD_VARIANT variant installed${NC}"
+    log "  ✓ XanMod kernel installed ($XANMOD_VARIANT)"
 else
-    echo -e "   ${YELLOW}⚠${NC} XanMod: ${YELLOW}incompatible architecture${NC}"
+    log "  ✗ XanMod kernel not installed (incompatible architecture)"
+fi
+log "  ✓ Swap configured (${SWAP_SIZE}GB, swappiness=$SWAPPINESS)"
+log "  ✓ Firewall (UFW) enabled with SSH, HTTP, HTTPS"
+log "  ✓ Fail2Ban configured for SSH protection"
+log "  ✓ System limits increased"
+log "  ✓ Automatic security updates enabled"
+log "  ✓ Journal logs limited to 500MB"
+log "  ✓ SSH hardened (root login disabled, only key auth)"
+log "  ✓ tmpfs optimized"
+log "  ✓ I/O scheduler optimized"
+log "  ✓ Unnecessary services disabled"
+echo ""
+log "Created utility scripts:"
+log "  • vps-monitor.sh   - System monitoring"
+log "  • vps-cleanup.sh   - System cleanup (runs weekly)"
+log "  • vps-info.sh      - System information"
+log "  • network-test.sh  - Network performance test"
+echo ""
+log "Security Configuration:"
+log "  • Root login: DISABLED"
+log "  • Password authentication: DISABLED"
+log "  • SSH key authentication: ENABLED (for $NEW_USER only)"
+log "  • Passwordless sudo: ENABLED (for $NEW_USER and root)"
+log "  • SSH port: $SSH_PORT"
+echo ""
+warn "CRITICAL: Before disconnecting, verify SSH access:"
+warn "  1. Open a new terminal (don't close this one!)"
+warn "  2. Test login: ssh $NEW_USER@$(hostname -I | awk '{print $1}')"
+warn "  3. Test sudo: sudo -l (should work without password)"
+warn "  4. Only disconnect current session after successful test!"
+echo ""
+log "System Information:"
+/usr/local/bin/vps-info.sh
+echo ""
+warn "A system reboot is REQUIRED to activate all changes"
+if [ "$XANMOD_INSTALLED" = true ]; then
+    warn "Especially to boot into the new XanMod kernel"
+fi
+warn ""
+warn "IMPORTANT: Docker group membership will be active after reboot!"
+warn "After reboot, login as $NEW_USER and test: docker ps (should work without sudo)"
+echo ""
+read -p "Do you want to reboot now? (y/N): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    log "Rebooting system in 5 seconds... Press Ctrl+C to cancel"
+    sleep 5
+    reboot
+else
+    log "Reboot skipped. Please reboot manually when ready with: sudo reboot"
+    echo ""
+    warn "After reboot, check kernel version with: uname -r"
+    if [ "$XANMOD_INSTALLED" = true ]; then
+        warn "You should see 'xanmod' in the kernel version"
+    fi
 fi
 
 echo -e "   ${GREEN}✓${NC} Swap: ${CYAN}${SWAP_SIZE}GB (swappiness=$SWAPPINESS)${NC}"
@@ -1629,18 +1559,13 @@ echo -e "${YELLOW}•${NC} After reboot: ${CYAN}docker ps${NC} (should work with
 echo ""
 
 echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-if [[ "$QUIET_MODE" == "false" ]]; then
-    echo -ne "${GREEN}🔄 Reboot now? (y/N): ${NC}"
-    read -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        REBOOT_NOW=true
-    else
-        REBOOT_NOW=false
-    fi
+echo -ne "${GREEN}🔄 Reboot now? (y/N): ${NC}"
+read -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    REBOOT_NOW=true
 else
-    REBOOT_NOW=true  # Auto-reboot in quiet mode
-    log "Auto-rebooting in quiet mode..."
+    REBOOT_NOW=false
 fi
 
 if [[ "$REBOOT_NOW" == "true" ]]; then
