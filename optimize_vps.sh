@@ -463,11 +463,11 @@ setopt AUTO_PUSHD
 setopt PUSHD_IGNORE_DUPS
 setopt PUSHD_SILENT
 
-# CRITICAL: Load zsh-autosuggestions FIRST before compinit and other options
+# Load zsh-autosuggestions FIRST
 if [[ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
     source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
     
-    # Configure autosuggestions immediately after loading
+    # Configure autosuggestions
     ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=8'
     ZSH_AUTOSUGGEST_STRATEGY=(history completion)
     ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
@@ -478,7 +478,7 @@ if [[ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
     bindkey '^[^M' autosuggest-execute
 fi
 
-# Completion settings - load AFTER zsh-autosuggestions
+# Completion settings
 fpath=(~/.zsh/zsh-completions/src $fpath)
 
 autoload -Uz compinit
@@ -505,7 +505,7 @@ zstyle ':completion:*:*:*:*:processes' command "ps -u $USER -o pid,user,comm -w 
 zstyle ':completion:*' use-cache on
 zstyle ':completion:*' cache-path ~/.zsh/cache
 
-# Bash compatibility - set KSH_ARRAYS AFTER loading zsh-autosuggestions
+# Bash compatibility
 setopt BASH_REMATCH
 setopt KSH_ARRAYS
 autoload -Uz bashcompinit && bashcompinit
@@ -516,12 +516,6 @@ bindkey '^[[B' down-line-or-history
 bindkey '^[[3~' delete-char
 bindkey '^[[H' beginning-of-line
 bindkey '^[[F' end-of-line
-
-# Load zsh-syntax-highlighting last
-if [[ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
-    source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
-    ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern)
-fi
 
 # Environment variables - FIXED: Use system locale
 export EDITOR='vim'
@@ -622,6 +616,12 @@ extract() {
 
 # Initialize Starship prompt
 eval "$(starship init zsh)"
+
+# CRITICAL: Load zsh-syntax-highlighting LAST (after everything else)
+if [[ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
+    source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+    ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern)
+fi
 ZSHRC
 
     # Create Starship config
