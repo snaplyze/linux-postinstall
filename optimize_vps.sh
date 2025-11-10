@@ -6,6 +6,7 @@
 # Features: Auto RAM detection, XanMod kernel, user creation, SSH hardening
 # Author: Auto-generated
 # Date: 2025-11-09
+# Fixed: Zsh autosuggestions errors
 ################################################################################
 
 set -e
@@ -374,25 +375,33 @@ setopt BASH_REMATCH              # Enable regex matching like bash
 setopt KSH_ARRAYS                # Array indexing from 0 (bash-like)
 autoload -Uz bashcompinit && bashcompinit
 
-# Plugin configuration (BEFORE loading plugins)
-# Autosuggestions configuration
-ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=240'
-ZSH_AUTOSUGGEST_STRATEGY=(history completion)
-ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
-
-# Syntax highlighting configuration
-ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern cursor)
-
-# Load plugins (syntax-highlighting MUST be last!)
-source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
-source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
-
-# Key bindings
+# Key bindings BEFORE loading plugins
 bindkey '^[[A' up-line-or-history
 bindkey '^[[B' down-line-or-history
 bindkey '^[[3~' delete-char
 bindkey '^[[H' beginning-of-line
 bindkey '^[[F' end-of-line
+
+# Plugin configuration (BEFORE loading plugins)
+# Autosuggestions configuration
+ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=240'
+ZSH_AUTOSUGGEST_STRATEGY=(history completion)
+ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
+ZSH_AUTOSUGGEST_USE_ASYNC=1
+ZSH_AUTOSUGGEST_MANUAL_REBIND=1
+
+# Syntax highlighting configuration
+ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern cursor)
+
+# Load plugins with checks
+# Order matters: autosuggestions first, syntax-highlighting last
+if [[ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
+    source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
+fi
+
+if [[ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
+    source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+fi
 
 # Environment variables
 export LANG=en_US.UTF-8
@@ -1318,8 +1327,8 @@ log "  ✓ OS detected: $OS_NAME $OS_VERSION ($OS_CODENAME)"
 log "  ✓ Locale: $DEFAULT_LOCALE"
 log "  ✓ Hostname: $(hostname)"
 log "  ✓ Timezone: $(timedatectl show --property=Timezone --value)"
-log "  ✓ Zsh + Oh My Zsh installed for root and $NEW_USER"
-log "  ✓ Powerlevel10k theme with plugins (autosuggestions, syntax highlighting)"
+log "  ✓ Zsh + Starship installed for root and $NEW_USER"
+log "  ✓ Zsh plugins: autosuggestions, syntax highlighting, completions"
 log "  ✓ New user created: $NEW_USER (with sudo + docker access, passwordless)"
 log "  ✓ SSH keys configured for $NEW_USER"
 log "  ✓ System updated and essential packages installed"
