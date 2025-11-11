@@ -4,24 +4,6 @@
 # VPS Optimization Script for Debian 13 (Trixie)
 # Purpose: Complete VPS optimization with XanMod kernel support
 # Features: Auto RAM detection, XanMod kernel, user creation, SSH hardening
-# Version: 4.0 (Finally Fixed!)
-# Date: 2025-11-11
-#
-# Changelog v4.0:
-# - FIXED: Configuration order - plugins load BEFORE config (not after!)
-# - FIXED: NO ZSH_AUTOSUGGEST_ACCEPT_WIDGETS before loading - breaks widget creation
-# - FIXED: Use bindkey for autosuggest-accept AFTER plugin loads
-# - FIXED: Based on old_version_worked.sh that actually works
-# - Root cause: Setting ACCEPT_WIDGETS before source breaks anonymous function ()
-#
-# Changelog v3.0:
-# - FAILED: Wrong approach - configured variables before loading plugins
-#
-# Changelog v2.0:
-# - FIXED: Locale configuration (ru_RU.UTF-8 applies correctly)
-# - FIXED: CPU detection for VPS (triple fallback)
-# - REMOVED: Package duplication (zsh, git, curl)
-# - ADDED: Unicode icons for Starship (works everywhere)
 ################################################################################
 
 set -e
@@ -172,7 +154,7 @@ echo ""
 read -p "Press Enter once you've verified SSH access works..."
 
 ################################################################################
-# 1.5. System Localization Settings (FIXED)
+# 1.5. System Localization Settings
 ################################################################################
 log "Step 1.5: Configuring system localization..."
 
@@ -213,7 +195,7 @@ esac
 # Install locales package if not present
 apt-get install -y locales
 
-# Generate locales (FIXED)
+# Generate locales
 log "Generating locales..."
 for locale in $LOCALE_TO_GENERATE; do
     log "Processing locale: $locale"
@@ -232,7 +214,7 @@ done
 # Generate locales
 locale-gen
 
-# Set default locale (FIXED)
+# Set default locale
 update-locale LANG=$DEFAULT_LOCALE LC_ALL=$DEFAULT_LOCALE LANGUAGE=${DEFAULT_LOCALE%%.*}
 
 # Also export for current session
@@ -240,7 +222,7 @@ export LANG=$DEFAULT_LOCALE
 export LC_ALL=$DEFAULT_LOCALE
 export LANGUAGE=${DEFAULT_LOCALE%%.*}
 
-# Write to profile for all users (FIXED)
+# Write to profile for all users
 cat > /etc/profile.d/locale.sh <<EOF
 export LANG=$DEFAULT_LOCALE
 export LC_ALL=$DEFAULT_LOCALE
@@ -312,7 +294,7 @@ info "  Timezone: $(timedatectl show --property=Timezone --value)"
 echo ""
 
 ################################################################################
-# 1.7. Zsh and Starship Installation (FIXED VERSION)
+# 1.7. Zsh and Starship Installation
 ################################################################################
 log "Step 1.7: Installing and configuring Zsh + Starship..."
 
@@ -355,7 +337,7 @@ setup_zsh_for_user() {
         log "zsh-completions plugin installed for $username"
     fi
 
-    # Create .zshrc with optimal configuration (TRULY FIXED VERSION v3.0)
+    # Create .zshrc with optimal configuration
     cat > "$user_home/.zshrc" <<'ZSHRC'
 # History configuration
 HISTSIZE=50000
@@ -729,8 +711,8 @@ echo ""
 info "Zsh + Starship configured successfully!"
 info "Features enabled:"
 info "  • Starship prompt with Unicode icons (⬢ 🐋 🐍 🌱)"
-info "  • Autosuggestions (fish-like suggestions) - TRULY FIXED v3.0"
-info "  • Syntax highlighting (real-time red/green) - TRULY FIXED v3.0"
+info "  • Autosuggestions (fish-like suggestions)"
+info "  • Syntax highlighting (real-time red/green)"
 info "  • Git integration"
 info "  • Docker context display"
 info "  • Advanced completion system"
@@ -771,7 +753,7 @@ else
 fi
 
 ################################################################################
-# 3. System Update and Essential Packages (NO DUPLICATES - FIXED)
+# 3. System Update and Essential Packages
 ################################################################################
 log "Step 3: Updating system and installing essential packages..."
 
@@ -1320,7 +1302,7 @@ SCRIPT
 chmod +x /usr/local/bin/network-test.sh
 
 ################################################################################
-# 20. System Information Script (FIXED CPU Detection)
+# 20. System Information Script
 ################################################################################
 log "Step 20: Creating system information script..."
 
@@ -1335,7 +1317,7 @@ echo "Kernel: $(uname -r)"
 echo "Uptime: $(uptime -p)"
 echo ""
 
-# CPU Detection with fallback (FIXED)
+# CPU Detection with fallback
 CPU_MODEL=$(grep -m1 "model name" /proc/cpuinfo | cut -d':' -f2 | xargs)
 if [ -z "$CPU_MODEL" ]; then
     # Fallback for systems without "model name" (ARM, some VPS)
@@ -1391,10 +1373,10 @@ log "  ✓ OS detected: $OS_NAME $OS_VERSION ($OS_CODENAME)"
 log "  ✓ Locale: $DEFAULT_LOCALE (will apply after reboot)"
 log "  ✓ Hostname: $(hostname)"
 log "  ✓ Timezone: $(timedatectl show --property=Timezone --value)"
-log "  ✓ Zsh + Starship installed for root and $NEW_USER (v3.0)"
-log "  ✓ Starship with Unicode icons (works everywhere)"
-log "  ✓ Autosuggestions plugin (TRULY FIXED v3.0 - no widget conflicts!)"
-log "  ✓ Syntax highlighting (TRULY FIXED v3.0 - real-time red/green colors!)"
+log "  ✓ Zsh + Starship installed for root and $NEW_USER"
+log "  ✓ Starship with Unicode icons"
+log "  ✓ Autosuggestions plugin"
+log "  ✓ Syntax highlighting"
 log "  ✓ Zsh completions with plugins"
 log "  ✓ New user created: $NEW_USER (with sudo + docker access, passwordless)"
 log "  ✓ SSH keys configured for $NEW_USER"
@@ -1421,7 +1403,7 @@ echo ""
 log "Created utility scripts:"
 log "  • vps-monitor.sh   - System monitoring"
 log "  • vps-cleanup.sh   - System cleanup (runs weekly)"
-log "  • vps-info.sh      - System information (FIXED CPU detection)"
+log "  • vps-info.sh      - System information"
 log "  • network-test.sh  - Network performance test"
 echo ""
 log "Security Configuration:"
