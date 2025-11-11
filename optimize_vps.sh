@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Force C locale for script execution to avoid locale-related issues
+export LC_ALL=C
+export LANG=C
+
 ################################################################################
 # VPS Optimization Script for Debian 13 (Trixie)
 # Purpose: Complete VPS optimization with XanMod kernel support
@@ -240,7 +244,7 @@ read -p "Enter new hostname (press Enter to keep current: $(hostname)): " NEW_HO
 
 if [ -n "$NEW_HOSTNAME" ]; then
     # Validate hostname
-    if [[ $NEW_HOSTNAME =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]]; then
+    if [[ $(LC_ALL=C; echo "$NEW_HOSTNAME") =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]]; then
         OLD_HOSTNAME=$(hostname)
 
         # Set new hostname
@@ -688,24 +692,27 @@ echo ""
 ################################################################################
 log "Step 2: Detecting system specifications..."
 
+# Install bc BEFORE using it (needed for calculations)
+apt-get install -y bc
+
 # Detect CPU architecture
 CPU_ARCH=$(uname -m)
 log "CPU Architecture: $CPU_ARCH"
 
-# Get total RAM in GB
+# Get total RAM in GB (force English locale for decimal point)
 TOTAL_RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-TOTAL_RAM_GB=$(awk "BEGIN {printf \"%.2f\", $TOTAL_RAM_KB/1024/1024}")
+TOTAL_RAM_GB=$(LC_NUMERIC=C awk "BEGIN {printf \"%.2f\", $TOTAL_RAM_KB/1024/1024}")
 log "Total RAM: ${TOTAL_RAM_GB}GB"
 
-# Calculate swap size based on RAM
-if (( $(echo "$TOTAL_RAM_GB < 3" | bc -l) )); then
+# Calculate swap size based on RAM (force English locale for bc)
+if (( $(LC_NUMERIC=C echo "$TOTAL_RAM_GB < 3" | bc -l) )); then
     # Less than 3GB: swap = 2 * RAM
-    SWAP_SIZE=$(awk "BEGIN {printf \"%.0f\", $TOTAL_RAM_GB * 2}")
+    SWAP_SIZE=$(LC_NUMERIC=C awk "BEGIN {printf \"%.0f\", $TOTAL_RAM_GB * 2}")
     SWAPPINESS=60
     log "RAM < 3GB: Creating ${SWAP_SIZE}GB swap (2x RAM)"
 else
     # 3GB or more: swap = RAM / 2
-    SWAP_SIZE=$(awk "BEGIN {printf \"%.0f\", $TOTAL_RAM_GB / 2}")
+    SWAP_SIZE=$(LC_NUMERIC=C awk "BEGIN {printf \"%.0f\", $TOTAL_RAM_GB / 2}")
     SWAPPINESS=10
     log "RAM >= 3GB: Creating ${SWAP_SIZE}GB swap (0.5x RAM)"
 fi
@@ -736,7 +743,6 @@ apt-get install -y \
     tmux \
     zip \
     unzip \
-    bc \
     gnupg \
     ca-certificates \
     lsb-release
@@ -750,19 +756,44 @@ log "Step 4: Checking XanMod kernel compatibility..."
 if [[ "$CPU_ARCH" == "x86_64" ]]; then
     log "CPU architecture is compatible with XanMod kernel"
 
-    # Check CPU for specific features
-    if grep -q 'avx2' /proc/cpuinfo; then
-        XANMOD_VARIANT="x64v3"
-        log "CPU supports AVX2 - using XanMod x64v3 variant"
-    elif grep -q 'sse4_2' /proc/cpuinfo; then
-        XANMOD_VARIANT="x64v2"
-        log "CPU supports SSE4.2 - using XanMod x64v2 variant"
-    else
-        XANMOD_VARIANT="x64v1"
-        log "Using XanMod x64v1 variant (generic)"
-    fi
+    # Use official XanMod CPU level detection script
+    info "Detecting CPU microarchitecture level..."
+    
+    CPU_LEVEL=$(awk 'BEGIN {
+        while (!/flags/) if (getline < "/proc/cpuinfo" != 1) exit 1
+        if (/lm/&&/cmov/&&/cx8/&&/fpu/&&/fxsr/&&/mmx/&&/syscall/&&/sse2/) level = 1
+        if (level == 1 && /cx16/&&/lahf/&&/popcnt/&&/sse4_1/&&/sse4_2/&&/ssse3/) level = 2
+        if (level == 2 && /avx/&&/avx2/&&/bmi1/&&/bmi2/&&/f16c/&&/fma/&&/abm/&&/movbe/&&/xsave/) level = 3
+        if (level == 3 && /avx512f/&&/avx512bw/&&/avx512cd/&&/avx512dq/&&/avx512vl/) level = 4
+        if (level > 0) { print level; exit 0 }
+        exit 1
+    }')
 
-    info "Installing XanMod kernel..."
+    # Determine XanMod variant based on CPU level
+    case "$CPU_LEVEL" in
+        4)
+            XANMOD_VARIANT="x64v4"
+            log "CPU supports x86-64-v4 (AVX-512) - using XanMod x64v4 variant"
+            ;;
+        3)
+            XANMOD_VARIANT="x64v3"
+            log "CPU supports x86-64-v3 (AVX2, BMI2, FMA) - using XanMod x64v3 variant"
+            ;;
+        2)
+            XANMOD_VARIANT="x64v2"
+            log "CPU supports x86-64-v2 (SSE4.2, POPCNT) - using XanMod x64v2 variant"
+            ;;
+        1)
+            XANMOD_VARIANT="x64v1"
+            log "CPU supports x86-64-v1 (basic) - using XanMod x64v1 variant"
+            ;;
+        *)
+            warn "Unable to detect CPU level. Using generic XanMod x64v1 variant"
+            XANMOD_VARIANT="x64v1"
+            ;;
+    esac
+
+    info "Installing XanMod kernel ($XANMOD_VARIANT)..."
 
     # Add XanMod repository
     wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor -o /usr/share/keyrings/xanmod-archive-keyring.gpg
@@ -771,8 +802,17 @@ if [[ "$CPU_ARCH" == "x86_64" ]]; then
 
     apt-get update
 
-    # Install XanMod kernel based on variant
+    # Install XanMod kernel based on detected variant
     case $XANMOD_VARIANT in
+        "x64v4")
+            if apt-cache show linux-xanmod-x64v4 &>/dev/null; then
+                apt-get install -y linux-xanmod-x64v4
+            else
+                warn "x64v4 package not available, falling back to x64v3"
+                apt-get install -y linux-xanmod-x64v3
+                XANMOD_VARIANT="x64v3"
+            fi
+            ;;
         "x64v3")
             apt-get install -y linux-xanmod-x64v3
             ;;
@@ -784,7 +824,7 @@ if [[ "$CPU_ARCH" == "x86_64" ]]; then
             ;;
     esac
 
-    log "XanMod kernel installed successfully"
+    log "XanMod kernel ($XANMOD_VARIANT) installed successfully"
     XANMOD_INSTALLED=true
 else
     warn "CPU architecture ($CPU_ARCH) is not compatible with XanMod kernel"
@@ -942,7 +982,9 @@ fi
 
 # Create new swap with calculated size
 log "Creating ${SWAP_SIZE}GB swap file..."
-fallocate -l ${SWAP_SIZE}G /swapfile
+if ! fallocate -l ${SWAP_SIZE}G /swapfile 2>/dev/null; then
+    dd if=/dev/zero of=/swapfile bs=1G count=$SWAP_SIZE status=progress
+fi
 chmod 600 /swapfile
 mkswap /swapfile
 swapon /swapfile
@@ -967,10 +1009,8 @@ ufw default deny incoming
 ufw default allow outgoing
 
 # Allow SSH (check current SSH port)
-SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}')
-if [ -z "$SSH_PORT" ]; then
-    SSH_PORT=22
-fi
+SSH_PORT=$(grep -E "^[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
+SSH_PORT=${SSH_PORT:-22}
 ufw allow $SSH_PORT/tcp comment 'SSH'
 
 # Allow HTTP and HTTPS
@@ -1300,7 +1340,7 @@ echo ""
 echo "Disk Usage:"
 df -h / | tail -1
 echo ""
-PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "Unable to detect")
+PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || curl -s --max-time 5 icanhazip.com 2>/dev/null || echo "Unable to detect")
 echo "Public IP: $PUBLIC_IP"
 echo ""
 echo "Active Firewall Rules:"
