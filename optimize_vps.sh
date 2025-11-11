@@ -4,16 +4,18 @@
 # VPS Optimization Script for Debian 13 (Trixie)
 # Purpose: Complete VPS optimization with XanMod kernel support
 # Features: Auto RAM detection, XanMod kernel, user creation, SSH hardening
-# Version: 3.0 (Truly Fixed)
+# Version: 4.0 (Finally Fixed!)
 # Date: 2025-11-11
 #
+# Changelog v4.0:
+# - FIXED: Configuration order - plugins load BEFORE config (not after!)
+# - FIXED: NO ZSH_AUTOSUGGEST_ACCEPT_WIDGETS before loading - breaks widget creation
+# - FIXED: Use bindkey for autosuggest-accept AFTER plugin loads
+# - FIXED: Based on old_version_worked.sh that actually works
+# - Root cause: Setting ACCEPT_WIDGETS before source breaks anonymous function ()
+#
 # Changelog v3.0:
-# - FIXED: Zsh-autosuggestions REALLY works now (no widget conflicts!)
-# - FIXED: Syntax highlighting REALLY works now (loads absolutely last)
-# - FIXED: Removed bindkey conflicts that broke autosuggestions
-# - FIXED: Correct plugin loading order (bindkey -> plugins -> NO MORE BINDKEY)
-# - FIXED: Explicit ZSH_AUTOSUGGEST_ACCEPT_WIDGETS configuration
-# - Root cause: bindkey AFTER plugin load was destroying plugin functionality
+# - FAILED: Wrong approach - configured variables before loading plugins
 #
 # Changelog v2.0:
 # - FIXED: Locale configuration (ru_RU.UTF-8 applies correctly)
@@ -412,50 +414,45 @@ setopt KSH_ARRAYS                # Array indexing from 0 (bash-like)
 autoload -Uz bashcompinit && bashcompinit
 
 # ============================================================================
-# KEY BINDINGS - MUST BE BEFORE LOADING PLUGINS!
+# KEY BINDINGS - BEFORE LOADING PLUGINS
 # ============================================================================
-# Standard navigation keys (DO NOT override forward-char and end-of-line!)
+# Standard navigation keys
 bindkey '^[[A' up-line-or-history      # Up arrow
 bindkey '^[[B' down-line-or-history    # Down arrow
 bindkey '^[[3~' delete-char            # Delete key
 bindkey '^[[H' beginning-of-line       # Home key
+bindkey '^[[F' end-of-line             # End key
 bindkey '^[[1;5C' forward-word         # Ctrl+Right arrow
 bindkey '^[[1;5D' backward-word        # Ctrl+Left arrow
-
-# ============================================================================
-# PLUGIN CONFIGURATION - MUST BE BEFORE LOADING PLUGINS!
-# ============================================================================
-
-# Autosuggestions configuration
-ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=240'
-ZSH_AUTOSUGGEST_STRATEGY=(history completion)
-ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
-ZSH_AUTOSUGGEST_USE_ASYNC=1
-# Accept widgets - Right arrow and End will accept suggestions
-ZSH_AUTOSUGGEST_ACCEPT_WIDGETS=(forward-char end-of-line vi-forward-char vi-end-of-line vi-add-eol)
-# Clear widgets
-ZSH_AUTOSUGGEST_CLEAR_WIDGETS=(history-search-forward history-search-backward beginning-of-line)
-
-# Syntax highlighting configuration
-ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern cursor)
 
 # ============================================================================
 # LOAD PLUGINS - ORDER IS CRITICAL!
 # ============================================================================
 
-# 1. First load autosuggestions
-if [ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]; then
+# Load zsh-autosuggestions FIRST
+if [[ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
     source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
+
+    # Configure autosuggestions AFTER loading (this is the key!)
+    ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=8'
+    ZSH_AUTOSUGGEST_STRATEGY=(history completion)
+    ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
+    ZSH_AUTOSUGGEST_USE_ASYNC=true
+
+    # Key bindings for autosuggestions
+    bindkey '^ ' autosuggest-accept
+    bindkey '^[^M' autosuggest-execute
 fi
 
-# 2. Load syntax-highlighting ABSOLUTELY LAST (no bindkey after this!)
-if [ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]; then
+# ============================================================================
+# LOAD SYNTAX-HIGHLIGHTING LAST!
+# ============================================================================
+
+# CRITICAL: Load zsh-syntax-highlighting LAST (after everything else)
+if [[ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
     source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+    ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern)
 fi
-
-# ============================================================================
-# NO MORE BINDKEY OR ZLE COMMANDS AFTER THIS POINT!
-# ============================================================================
 
 # Environment variables
 export LANG=en_US.UTF-8
