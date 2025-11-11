@@ -343,107 +343,58 @@ setup_zsh_for_user() {
 HISTSIZE=50000
 SAVEHIST=50000
 HISTFILE=~/.zsh_history
-setopt EXTENDED_HISTORY          # Write the history file in the ':start:elapsed;command' format
-setopt INC_APPEND_HISTORY        # Write to the history file immediately, not when the shell exits
-setopt SHARE_HISTORY             # Share history between all sessions
-setopt HIST_IGNORE_DUPS          # Do not record an event that was just recorded again
-setopt HIST_IGNORE_ALL_DUPS      # Delete an old recorded event if a new event is a duplicate
-setopt HIST_IGNORE_SPACE         # Do not record an event starting with a space
-setopt HIST_SAVE_NO_DUPS         # Do not write a duplicate event to the history file
-setopt HIST_VERIFY               # Do not execute immediately upon history expansion
-setopt APPEND_HISTORY            # Append to history file (important!)
+setopt EXTENDED_HISTORY INC_APPEND_HISTORY SHARE_HISTORY
+setopt HIST_IGNORE_DUPS HIST_IGNORE_ALL_DUPS HIST_IGNORE_SPACE
+setopt HIST_SAVE_NO_DUPS HIST_VERIFY APPEND_HISTORY
 
 # Directory navigation
-setopt AUTO_CD                   # Auto cd when entering just a path
-setopt AUTO_PUSHD                # Push the current directory visited on the stack
-setopt PUSHD_IGNORE_DUPS         # Do not store duplicates in the stack
-setopt PUSHD_SILENT              # Do not print the directory stack after pushd or popd
-
-# Completion settings
-# Load zsh-completions BEFORE compinit
-fpath=(~/.zsh/zsh-completions/src $fpath)
-
-autoload -Uz compinit
-compinit -d ~/.zcompdump
-
-# Completion options
-setopt COMPLETE_IN_WORD          # Complete from both ends of a word
-setopt ALWAYS_TO_END             # Move cursor to the end of a completed word
-setopt PATH_DIRS                 # Perform path search even on command names with slashes
-setopt AUTO_MENU                 # Show completion menu on a successive tab press
-setopt AUTO_LIST                 # Automatically list choices on ambiguous completion
-setopt AUTO_PARAM_SLASH          # If completed parameter is a directory, add a trailing slash
-setopt MENU_COMPLETE             # Insert first match immediately on ambiguous completion
-unsetopt FLOW_CONTROL            # Disable start/stop characters in shell editor
-
-# Case-insensitive completion
-zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|[._-]=* r:|=*' 'l:|=* r:|=*'
-
-# Colored completion (ls colors)
-zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
-
-# Better completion for kill command
-zstyle ':completion:*:*:kill:*:processes' list-colors '=(#b) #([0-9]#) ([0-9a-z-]#)*=01;34=0=01'
-zstyle ':completion:*:*:*:*:processes' command "ps -u $USER -o pid,user,comm -w -w"
-
-# Cache completions
-zstyle ':completion:*' use-cache on
-zstyle ':completion:*' cache-path ~/.zsh/cache
-
-# Bash compatibility
-setopt BASH_REMATCH              # Enable regex matching like bash
-setopt KSH_ARRAYS                # Array indexing from 0 (bash-like)
-autoload -Uz bashcompinit && bashcompinit
-
-# ============================================================================
-# KEY BINDINGS - BEFORE LOADING PLUGINS
-# ============================================================================
-# Standard navigation keys
-bindkey '^[[A' up-line-or-history      # Up arrow
-bindkey '^[[B' down-line-or-history    # Down arrow
-bindkey '^[[3~' delete-char            # Delete key
-bindkey '^[[H' beginning-of-line       # Home key
-bindkey '^[[F' end-of-line             # End key
-bindkey '^[[1;5C' forward-word         # Ctrl+Right arrow
-bindkey '^[[1;5D' backward-word        # Ctrl+Left arrow
-
-# ============================================================================
-# LOAD PLUGINS - ORDER IS CRITICAL!
-# ============================================================================
+setopt AUTO_CD AUTO_PUSHD PUSHD_IGNORE_DUPS PUSHD_SILENT
 
 # Load zsh-autosuggestions FIRST
 if [[ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
     source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
-
-    # Configure autosuggestions AFTER loading (this is the key!)
     ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=8'
     ZSH_AUTOSUGGEST_STRATEGY=(history completion)
     ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=20
     ZSH_AUTOSUGGEST_USE_ASYNC=true
-
-    # Key bindings for autosuggestions
     bindkey '^ ' autosuggest-accept
     bindkey '^[^M' autosuggest-execute
 fi
 
-# ============================================================================
-# LOAD SYNTAX-HIGHLIGHTING LAST!
-# ============================================================================
-
-# CRITICAL: Load zsh-syntax-highlighting LAST (after everything else)
-if [[ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
-    source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
-    ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern)
+# Completion settings
+fpath=(~/.zsh/zsh-completions/src $fpath)
+autoload -Uz compinit
+if [[ -n ${ZDOTDIR}/.zcompdump(#qN.mh+24) ]]; then
+    compinit
+else
+    compinit -C
 fi
 
+setopt COMPLETE_IN_WORD ALWAYS_TO_END PATH_DIRS AUTO_MENU AUTO_LIST AUTO_PARAM_SLASH
+unsetopt FLOW_CONTROL
+
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|[._-]=* r:|=*' 'l:|=* r:|=*'
+zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
+zstyle ':completion:*:*:kill:*:processes' list-colors '=(#b) #([0-9]#) ([0-9a-z-]#)*=01;34=0=01'
+zstyle ':completion:*:*:*:*:processes' command "ps -u $USER -o pid,user,comm -w -w"
+zstyle ':completion:*' use-cache on
+zstyle ':completion:*' cache-path ~/.zsh/cache
+
+# Bash compatibility
+setopt BASH_REMATCH KSH_ARRAYS
+autoload -Uz bashcompinit && bashcompinit
+
+# Key bindings
+bindkey '^[[A' up-line-or-history
+bindkey '^[[B' down-line-or-history
+bindkey '^[[3~' delete-char
+bindkey '^[[H' beginning-of-line
+bindkey '^[[F' end-of-line
+
 # Environment variables
-export LANG=en_US.UTF-8
 export EDITOR='vim'
 export VISUAL='vim'
 export PAGER='less'
-
-# Enable colors
-autoload -U colors && colors
 
 # Docker aliases
 alias d='docker'
@@ -537,8 +488,14 @@ extract() {
     fi
 }
 
-# Initialize Starship prompt (LAST!)
+# Initialize Starship prompt
 eval "$(starship init zsh)"
+
+# Load zsh-syntax-highlighting LAST
+if [[ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
+    source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+    ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern)
+fi
 ZSHRC
 
     # Create Starship config with Unicode icons (works everywhere)
