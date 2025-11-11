@@ -350,7 +350,13 @@ setopt HIST_SAVE_NO_DUPS HIST_VERIFY APPEND_HISTORY
 # Directory navigation
 setopt AUTO_CD AUTO_PUSHD PUSHD_IGNORE_DUPS PUSHD_SILENT
 
-# Load zsh-autosuggestions FIRST
+# Load zsh-syntax-highlighting FIRST
+if [[ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
+    ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern)
+    source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+fi
+
+# Load zsh-autosuggestions SECOND
 if [[ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
     source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
     ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=8'
@@ -491,11 +497,6 @@ extract() {
 # Initialize Starship prompt
 eval "$(starship init zsh)"
 
-# Load zsh-syntax-highlighting LAST
-if [[ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
-    source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
-    ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets pattern)
-fi
 ZSHRC
 
     # Create Starship config with Unicode icons (works everywhere)
