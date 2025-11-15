@@ -702,6 +702,8 @@ log "CPU Architecture: $CPU_ARCH"
 # Get total RAM in GB (force English locale for decimal point)
 TOTAL_RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 TOTAL_RAM_GB=$(LC_NUMERIC=C awk "BEGIN {printf \"%.2f\", $TOTAL_RAM_KB/1024/1024}")
+# Replace comma with dot for calculations
+TOTAL_RAM_GB=$(echo "$TOTAL_RAM_GB" | tr ',' '.')
 log "Total RAM: ${TOTAL_RAM_GB}GB"
 
 # Calculate swap size based on RAM (force English locale for bc)
